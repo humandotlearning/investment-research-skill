@@ -24,7 +24,10 @@ Use the run's sourcing directory as the output location.
 
 ## Exa retrieval
 
-Set `EXA_API_KEY`; never place a key in a command, source file, or artifact.
+Prefer a non-empty `EXA_API_KEY` process environment value. If it is not set,
+the helper reads `EXA_API_KEY` only from `.env.local` in the repository from
+which the command is run. Never place a key in a command, source file, or
+artifact.
 Run the helper from the repository root:
 
 ```powershell

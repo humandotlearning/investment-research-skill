@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import sys
+from pathlib import Path
 
 try:
     from exa_py import Exa
@@ -15,6 +16,35 @@ DEFAULT_FOCUS = (
     "team and founders, product, target customer and market, traction and freshness, "
     "funding, competitors, technical signals, risks, and unanswered questions"
 )
+
+
+def _load_api_key():
+    api_key = os.environ.get("EXA_API_KEY")
+    if api_key:
+        return api_key
+
+    try:
+        lines = (Path.cwd() / ".env.local").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].strip()
+        if "=" not in line:
+            if line == "EXA_API_KEY":
+                return None
+            continue
+        key, value = (part.strip() for part in line.split("=", 1))
+        if key != "EXA_API_KEY":
+            continue
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        return value or None
+    return None
 
 
 def _serialize(result):
@@ -63,7 +93,7 @@ def main():
 
     try:
         output = research_company(
-            args.name, args.website, args.focus, os.environ.get("EXA_API_KEY")
+            args.name, args.website, args.focus, _load_api_key()
         )
     except Exception as error:
         print(f"Exa research failed: {error}", file=sys.stderr)

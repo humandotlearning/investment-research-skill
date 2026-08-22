@@ -22,8 +22,10 @@ facts collected. Use the company's startup output directory.
 
 ## First research pass
 
-Set `EXA_API_KEY`; never write it to an artifact. From the repository root,
-run:
+Prefer a non-empty `EXA_API_KEY` process environment value. If it is not set,
+the helper reads `EXA_API_KEY` only from `.env.local` in the repository from
+which the command is run. Never place a key in a command, source file, or
+artifact. From the repository root, run:
 
 ```powershell
 python skills/research/scripts/research.py --name "Acme" --website "https://acme.example"
