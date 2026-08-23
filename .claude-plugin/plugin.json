@@ -1,0 +1,14 @@
+{
+  "name": "investment-research",
+  "version": "0.2.0",
+  "description": "Portable skills for evidence-bound startup investment research.",
+  "author": {
+    "name": "Human Dot Learning"
+  },
+  "repository": "https://github.com/humandotlearning/investment-research-skill",
+  "keywords": [
+    "investment-research",
+    "startup-research",
+    "agent-skills"
+  ]
+}
