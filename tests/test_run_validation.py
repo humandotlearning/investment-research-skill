@@ -76,7 +76,15 @@ class NewRunValidationTests(unittest.TestCase):
                 "selected_for_research": True,
             })
             retrieval_results.append({
-                "title": name, "url": origin_url, "published_date": "S24", "highlights": ["signal"]
+                "title": name,
+                "candidate_name": name,
+                "candidate_slug": slug,
+                "candidate_website": website,
+                "source": "yc",
+                "source_id": f"yc-{rank}",
+                "url": origin_url,
+                "published_date": "S24",
+                "highlights": ["signal"],
             })
         retrieval = {"query":"Acme","provider":"source_snapshots","retrieved_at":"2026-08-23T00:00:00Z","status":"ok","exit_code":0,"results":retrieval_results}
         (sourcing / "retrieval.json").write_text(json.dumps(retrieval), encoding="utf-8")

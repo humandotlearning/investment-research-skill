@@ -99,6 +99,9 @@ class AssignmentEvidenceCoverageTests(unittest.TestCase):
             "results": [
                 {
                     "title": candidate["name"],
+                    "candidate_name": candidate["name"],
+                    "candidate_slug": candidate["slug"],
+                    "candidate_website": candidate["website"],
                     "url": origin["canonical_url"],
                     "source": origin["source"],
                     "source_id": origin["source_id"],
@@ -513,18 +516,69 @@ class AssignmentEvidenceCoverageTests(unittest.TestCase):
         self.assertFalse(result["valid"], result)
         self.assertTrue(any("exclusion excluded co" in error.lower() and "provenance" in error.lower() for error in result["errors"]))
 
-    def test_origin_provider_and_source_id_must_match_retrieval_when_present(self):
-        with tempfile.TemporaryDirectory() as directory:
-            run_dir = self.make_complete_run(Path(directory))
-            candidates_path = run_dir / "sourcing" / "candidates.json"
-            candidates = json.loads(candidates_path.read_text(encoding="utf-8"))
-            candidates["candidates"][0]["origins"][0]["source_id"] = "wrong-yc-id"
-            candidates_path.write_text(json.dumps(candidates), encoding="utf-8")
+    def test_origin_provenance_requires_exact_source_id_and_candidate_identity(self):
+        mutations = (
+            (lambda record: record.pop("source"), "source"),
+            (lambda record: record.pop("source_id"), "source_id"),
+            (lambda record: record.update({"source": "invented"}), "source"),
+            (lambda record: record.update({"source_id": "invented"}), "source_id"),
+            (lambda record: record.update({"candidate_name": "Company 2"}), "candidate identity"),
+            (lambda record: record.update({"candidate_slug": "company-2"}), "candidate identity"),
+        )
+        for mutate, phrase in mutations:
+            with self.subTest(phrase=phrase), tempfile.TemporaryDirectory() as directory:
+                run_dir = self.make_complete_run(Path(directory))
+                retrieval_path = run_dir / "sourcing" / "retrieval.json"
+                retrieval = json.loads(retrieval_path.read_text(encoding="utf-8"))
+                mutate(retrieval["results"][0])
+                retrieval_path.write_text(json.dumps(retrieval), encoding="utf-8")
 
-            result = self.run_module.validate_run(run_dir)
+                result = self.run_module.validate_run(run_dir)
 
-        self.assertFalse(result["valid"], result)
-        self.assertTrue(any("source_id" in error for error in result["errors"]))
+            self.assertFalse(result["valid"], result)
+            self.assertTrue(any(phrase in error.lower() for error in result["errors"]), result["errors"])
+
+    def test_signal_provenance_requires_exact_provider_and_source_id(self):
+        mutations = (
+            (lambda record: record.pop("source"), "source"),
+            (lambda record: record.pop("source_id"), "source_id"),
+            (lambda record: record.update({"source": "yc"}), "source"),
+            (lambda record: record.update({"source_id": "other-item"}), "source_id"),
+            (lambda record: record.update({"candidate_name": "Company 2"}), "candidate identity"),
+        )
+        for mutate, phrase in mutations:
+            with self.subTest(phrase=phrase), tempfile.TemporaryDirectory() as directory:
+                run_dir = self.make_complete_run(Path(directory))
+                candidates_path = run_dir / "sourcing" / "candidates.json"
+                candidates = json.loads(candidates_path.read_text(encoding="utf-8"))
+                candidate = candidates["candidates"][0]
+                hn_url = "https://news.ycombinator.com/item?id=4242"
+                candidate["freshness_or_traction_signals"].append(
+                    {"kind": "traction", "source_url": hn_url, "score": 10}
+                )
+                candidate["source_urls"].append(hn_url)
+                candidates_path.write_text(json.dumps(candidates), encoding="utf-8")
+                retrieval_path = run_dir / "sourcing" / "retrieval.json"
+                retrieval = json.loads(retrieval_path.read_text(encoding="utf-8"))
+                signal_record = {
+                    "title": candidate["name"],
+                    "candidate_name": candidate["name"],
+                    "candidate_slug": candidate["slug"],
+                    "candidate_website": candidate["website"],
+                    "url": hn_url,
+                    "source": "hacker_news",
+                    "source_id": "4242",
+                    "published_date": "2026-08-20T00:00:00Z",
+                    "highlights": ["HN traction signal"],
+                }
+                mutate(signal_record)
+                retrieval["results"].append(signal_record)
+                retrieval_path.write_text(json.dumps(retrieval), encoding="utf-8")
+
+                result = self.run_module.validate_run(run_dir)
+
+            self.assertFalse(result["valid"], result)
+            self.assertTrue(any(phrase in error.lower() for error in result["errors"]), result["errors"])
 
     def test_origin_provenance_comparison_normalizes_tracking_query(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -839,17 +893,68 @@ class AssignmentEvidenceCoverageTests(unittest.TestCase):
         self.assertFalse(result["valid"], result)
         self.assertTrue(any("factual narrative" in error.lower() for error in result["errors"]))
 
+    def test_factual_metrics_cannot_hide_in_markdown_representations_or_uncertainty(self):
+        inserted_lines = (
+            "### Company 1 reports $50M ARR and 95% retention",
+            "| Operating metrics | $50M ARR and 95% retention |",
+            "- ARR is $50M and retention is 95%, but churn may increase.",
+        )
+        for inserted in inserted_lines:
+            with self.subTest(inserted=inserted), tempfile.TemporaryDirectory() as directory:
+                run_dir = self.make_complete_run(Path(directory))
+                analysis_path = run_dir / "companies" / "company-1" / "analysis.md"
+                analysis = analysis_path.read_text(encoding="utf-8")
+                if inserted.startswith("-"):
+                    analysis = analysis.replace(
+                        "- Company-reported evidence needs confirmation.", inserted
+                    )
+                else:
+                    analysis = analysis.replace(
+                        "## Evidence-backed narrative",
+                        f"## Evidence-backed narrative\n{inserted}",
+                    )
+                analysis_path.write_text(analysis, encoding="utf-8")
+
+                result = self.run_module.validate_run(run_dir)
+
+            self.assertFalse(result["valid"], result)
+            self.assertTrue(
+                any("factual narrative" in error.lower() for error in result["errors"]),
+                result["errors"],
+            )
+
+    def test_narrative_allows_referenced_prose_and_nonfactual_connective_or_open_questions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = self.make_complete_run(Path(directory))
+            analysis_path = run_dir / "companies" / "company-1" / "analysis.md"
+            analysis = analysis_path.read_text(encoding="utf-8")
+            analysis = analysis.replace(
+                "## Evidence-backed narrative",
+                "## Evidence-backed narrative\n"
+                "Company 1 reports $50M ARR and 95% retention. [refs: traction-1]\n"
+                "Taken together, these signals inform the recommendation.\n"
+                "| Operating metrics | $50M ARR and 95% retention [refs: traction-1] |",
+            ).replace(
+                "- Company-reported evidence needs confirmation.",
+                "- Could churn increase?",
+            )
+            analysis_path.write_text(analysis, encoding="utf-8")
+
+            result = self.run_module.validate_run(run_dir)
+
+        self.assertTrue(result["valid"], result["errors"])
+
     def test_qualitative_assertions_and_unstructured_narrative_are_not_ignored(self):
         mutations = (
             (
                 "- Company 1 reports $2M ARR. [refs: traction-1]",
                 "- The startup signed several enterprise pilots.",
-                "narrative bullet",
+                "factual narrative",
             ),
             (
                 "- Company 1 reports $2M ARR. [refs: traction-1]",
                 "The startup signed several enterprise pilots.",
-                "structured bullet",
+                "factual narrative",
             ),
         )
         for old, new, phrase in mutations:

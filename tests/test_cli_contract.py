@@ -38,6 +38,222 @@ class CliContractTests(unittest.TestCase):
             check=False,
         )
 
+    def write_snapshot_fixture(self, root, count, *, include_hn=False):
+        product_hunt_entries = []
+        yc_companies = []
+        for index in range(count):
+            product_hunt_entries.append(
+                f"""  <entry>
+    <id>tag:producthunt.com,2026-08-20:post/{1000 + index}</id>
+    <title>Company {index} – Workflow automation</title>
+    <updated>2026-08-20T12:00:00Z</updated>
+    <link rel="related" href="https://company-{index}.example/launch" />
+    <link rel="alternate" href="https://www.producthunt.com/posts/company-{index}" />
+    <summary>Company {index} automates a recurring workflow.</summary>
+  </entry>"""
+            )
+            yc_companies.append(
+                {
+                    "id": 2000 + index,
+                    "name": f"Company {index}",
+                    "slug": f"company-{index}",
+                    "website": f"https://company-{index}.example",
+                    "one_liner": f"Company {index} automates a recurring workflow.",
+                    "batch": "S26",
+                    "url": f"https://www.ycombinator.com/companies/company-{index}",
+                }
+            )
+        product_hunt = root / "product-hunt.atom"
+        product_hunt.write_text(
+            '<?xml version="1.0" encoding="utf-8"?>\n'
+            '<feed xmlns="http://www.w3.org/2005/Atom">\n'
+            + "\n".join(product_hunt_entries)
+            + "\n</feed>\n",
+            encoding="utf-8",
+        )
+        yc = root / "yc.json"
+        yc.write_text(json.dumps({"companies": yc_companies}), encoding="utf-8")
+        hacker_news = None
+        if include_hn:
+            hacker_news = root / "hn.json"
+            hacker_news.write_text(
+                json.dumps(
+                    [
+                        {
+                            "id": 3000,
+                            "type": "story",
+                            "title": "Show HN: Company 0 – Workflow automation",
+                            "url": "https://company-0.example/launch",
+                            "time": 1787227200,
+                            "score": 42,
+                            "descendants": 7,
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+        return product_hunt, yc, hacker_news
+
+    def run_snapshot_fixture(self, root, count, *, include_hn=False):
+        source_input = root / "input.json"
+        source_thesis = root / "thesis.md"
+        source_input.write_text(
+            json.dumps(
+                {
+                    "seed": {"type": "topic", "value": "Workflow automation"},
+                    "sourcing": {"target_count": 10},
+                    "research": {"full_coverage": True},
+                }
+            ),
+            encoding="utf-8",
+        )
+        source_thesis.write_text("Back recurring workflow automation.", encoding="utf-8")
+        rubric = write_rubric(root / "rubric.json", source_thesis)
+        run_dir = root / "run"
+        initialized = self.run_cli(
+            RUN,
+            "init",
+            "--run-dir",
+            run_dir,
+            "--input",
+            source_input,
+            "--thesis",
+            source_thesis,
+            "--rubric",
+            rubric,
+            cwd=root,
+        )
+        self.assertEqual(initialized.returncode, 0, initialized.stderr)
+        product_hunt, yc, hacker_news = self.write_snapshot_fixture(
+            root, count, include_hn=include_hn
+        )
+        arguments = [
+            "snapshots",
+            "--input",
+            run_dir / "input.json",
+            "--thesis",
+            run_dir / "thesis.md",
+            "--product-hunt",
+            product_hunt,
+            "--yc",
+            yc,
+        ]
+        if hacker_news is not None:
+            arguments.extend(["--hacker-news", hacker_news])
+        arguments.extend(
+            [
+                "--output",
+                run_dir / "sourcing" / "candidates.json",
+                "--retrieval-output",
+                run_dir / "sourcing" / "retrieval.json",
+            ]
+        )
+        produced = self.run_cli(SEARCH, *arguments, cwd=root)
+        self.assertEqual(produced.returncode, 0, produced.stderr)
+        return run_dir
+
+    def test_snapshot_dual_origins_and_hn_provenance_pass_v2_sourcing_validation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_dir = self.run_snapshot_fixture(root, 10, include_hn=True)
+            candidates = json.loads(
+                (run_dir / "sourcing" / "candidates.json").read_text(encoding="utf-8")
+            )
+            retrieval = json.loads(
+                (run_dir / "sourcing" / "retrieval.json").read_text(encoding="utf-8")
+            )
+            staged = self.run_cli(
+                RUN,
+                "stage",
+                "--run-dir",
+                run_dir,
+                "--stage",
+                "sourcing",
+                "--status",
+                "completed",
+                "--provider",
+                "source_snapshots",
+                "--exit-code",
+                "0",
+                "--artifact",
+                "sourcing/retrieval.json",
+                "--artifact",
+                "sourcing/candidates.json",
+                cwd=root,
+            )
+
+        self.assertEqual(staged.returncode, 0, staged.stderr)
+        candidate = candidates["candidates"][0]
+        self.assertEqual({origin["source"] for origin in candidate["origins"]}, {"product_hunt", "yc"})
+        self.assertEqual(
+            set(candidate["source_urls"]),
+            {
+                *(origin["canonical_url"] for origin in candidate["origins"]),
+                "https://news.ycombinator.com/item?id=3000",
+            },
+        )
+        candidate_results = [
+            result
+            for result in retrieval["results"]
+            if result["candidate_slug"] == candidate["slug"]
+        ]
+        self.assertEqual({result["source"] for result in candidate_results}, {"product_hunt", "yc", "hacker_news"})
+        self.assertTrue(
+            all(
+                result.get("candidate_name") == candidate["name"]
+                and result.get("candidate_website") == candidate["website"]
+                and result.get("source_id")
+                and result.get("url")
+                for result in candidate_results
+            )
+        )
+
+    def test_snapshot_exclusion_origins_are_emitted_and_pass_v2_sourcing_validation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_dir = self.run_snapshot_fixture(root, 11)
+            candidates = json.loads(
+                (run_dir / "sourcing" / "candidates.json").read_text(encoding="utf-8")
+            )
+            retrieval = json.loads(
+                (run_dir / "sourcing" / "retrieval.json").read_text(encoding="utf-8")
+            )
+            staged = self.run_cli(
+                RUN,
+                "stage",
+                "--run-dir",
+                run_dir,
+                "--stage",
+                "sourcing",
+                "--status",
+                "completed",
+                "--provider",
+                "source_snapshots",
+                "--exit-code",
+                "0",
+                "--artifact",
+                "sourcing/retrieval.json",
+                "--artifact",
+                "sourcing/candidates.json",
+                cwd=root,
+            )
+
+        self.assertEqual(staged.returncode, 0, staged.stderr)
+        self.assertEqual(len(candidates["candidates"]), 10)
+        self.assertEqual(len(candidates["excluded"]), 1)
+        exclusion = candidates["excluded"][0]
+        exclusion_results = [
+            result
+            for result in retrieval["results"]
+            if result.get("candidate_name") == exclusion["name"]
+        ]
+        self.assertEqual(len(exclusion_results), 2)
+        self.assertEqual({result["source"] for result in exclusion_results}, {"product_hunt", "yc"})
+        self.assertEqual(
+            {result["source_id"] for result in exclusion_results},
+            {origin["source_id"] for origin in exclusion["origins"]},
+        )
+
     def test_search_missing_key_writes_failure_envelope_and_returns_four(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -121,7 +337,7 @@ class CliContractTests(unittest.TestCase):
         self.assertEqual(retrieval["status"], "ok")
         self.assertEqual(retrieval["exit_code"], 0)
         self.assertTrue(retrieval["retrieved_at"].endswith("Z"))
-        self.assertEqual(len(retrieval["results"]), 1)
+        self.assertEqual(len(retrieval["results"]), 3)
         candidate = payload["candidates"][0]
         self.assertEqual(
             candidate["thesis_fit_reasons"],

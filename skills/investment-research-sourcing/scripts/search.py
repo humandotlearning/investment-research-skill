@@ -6,6 +6,7 @@ import argparse
 import importlib.util
 import json
 import os
+import re
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -335,8 +336,20 @@ def _research_limit(input_data: dict, requested_count: int) -> int:
 
 
 def _run_candidate(candidate: dict, research_limit: int) -> dict:
-    source_url = candidate["origins"][0]["canonical_url"]
     reasons = list(candidate["thesis_fit_reasons"])
+    source_urls = {
+        str(origin["canonical_url"])
+        for origin in candidate.get("origins", [])
+        if isinstance(origin, dict) and origin.get("canonical_url")
+    }
+    team_signal = candidate.get("team_signal")
+    if isinstance(team_signal, dict) and team_signal.get("source_url"):
+        source_urls.add(str(team_signal["source_url"]))
+    source_urls.update(
+        str(signal["source_url"])
+        for signal in candidate.get("freshness_or_traction_signals", [])
+        if isinstance(signal, dict) and signal.get("source_url")
+    )
     return {
         **candidate,
         "description": candidate["one_line_description"],
@@ -344,7 +357,7 @@ def _run_candidate(candidate: dict, research_limit: int) -> dict:
         "fit_reasons": reasons,
         "research_priority": candidate["rank"],
         "source_quality": "primary_record",
-        "source_urls": [source_url],
+        "source_urls": sorted(source_urls),
         "selected_for_research": candidate["rank"] <= research_limit,
     }
 
@@ -357,15 +370,96 @@ def _run_exclusion(exclusion: dict) -> dict:
     }
 
 
-def _retrieval_result(candidate: dict) -> dict:
-    origin = candidate["origins"][0]
-    description = str(candidate["one_line_description"])
+def _provenance_result(
+    candidate: dict,
+    *,
+    source: str,
+    source_id: str,
+    url: str,
+    published_date: object,
+) -> dict:
+    description = str(candidate.get("one_line_description") or candidate.get("reason") or "")
     return {
-        "title": candidate["name"],
-        "url": origin["canonical_url"],
-        "published_date": origin["publication_or_batch_date"],
+        "title": str(candidate.get("name") or "Unknown"),
+        "candidate_name": str(candidate.get("name") or "Unknown"),
+        "candidate_slug": candidate.get("slug"),
+        "candidate_website": candidate.get("website"),
+        "source": source,
+        "source_id": str(source_id),
+        "url": url,
+        "published_date": published_date,
         "highlights": [description[:MAX_HIGHLIGHT_CHARS]] if description else [],
     }
+
+
+def _signal_provenance(signal: dict, candidate: dict) -> tuple[str, str, str, object]:
+    source_url = canonicalize_url(signal.get("source_url"))
+    if source_url is None:
+        raise RetrievalError("candidate signal requires a valid source URL", EXIT_INPUT)
+    for origin in candidate.get("origins", []):
+        if (
+            isinstance(origin, dict)
+            and canonicalize_url(origin.get("canonical_url")) == source_url
+        ):
+            return (
+                str(origin["source"]),
+                str(origin["source_id"]),
+                source_url,
+                origin.get("publication_or_batch_date"),
+            )
+    parsed = urlsplit(source_url)
+    if parsed.hostname == "news.ycombinator.com" and parsed.path == "/item":
+        match = re.fullmatch(r"id=(\d+)", parsed.query)
+        if match:
+            return "hacker_news", match.group(1), source_url, signal.get("date")
+    website = canonicalize_url(candidate.get("website"))
+    website_host = urlsplit(website).hostname if website else None
+    if parsed.hostname and website_host and (
+        parsed.hostname == website_host or parsed.hostname.endswith(f".{website_host}")
+    ):
+        return "official_company", source_url, source_url, signal.get("date")
+    raise RetrievalError(
+        f"candidate signal is not traceable to an allowed source: {source_url}", EXIT_INPUT
+    )
+
+
+def _retrieval_results(candidate: dict) -> list[dict]:
+    results: dict[tuple[str, str, str], dict] = {}
+    for origin in candidate.get("origins", []):
+        if not isinstance(origin, dict):
+            continue
+        result = _provenance_result(
+            candidate,
+            source=str(origin.get("source")),
+            source_id=str(origin.get("source_id")),
+            url=str(origin.get("canonical_url")),
+            published_date=origin.get("publication_or_batch_date"),
+        )
+        results[(result["source"], result["source_id"], result["url"])] = result
+    signals = []
+    if isinstance(candidate.get("team_signal"), dict):
+        signals.append(candidate["team_signal"])
+    signals.extend(
+        signal
+        for signal in candidate.get("freshness_or_traction_signals", [])
+        if isinstance(signal, dict)
+    )
+    for signal in signals:
+        source, source_id, source_url, published_date = _signal_provenance(
+            signal, candidate
+        )
+        key = (source, source_id, source_url)
+        results.setdefault(
+            key,
+            _provenance_result(
+                candidate,
+                source=source,
+                source_id=source_id,
+                url=source_url,
+                published_date=published_date,
+            ),
+        )
+    return [results[key] for key in sorted(results)]
 
 
 def _snapshot_main(argv) -> int:
@@ -416,23 +510,27 @@ def _snapshot_main(argv) -> int:
         candidates = candidates[:requested_count]
         excluded.extend(
             {
-                "name": candidate["name"],
+                **candidate,
                 "candidate_type": "excluded",
                 "reason": "outside requested count",
-                "origins": candidate["origins"],
             }
             for candidate in overflow
         )
         run_candidates = [
             _run_candidate(candidate, research_limit) for candidate in candidates
         ]
+        run_excluded = [_run_exclusion(exclusion) for exclusion in excluded]
         retrieval = {
             "query": query,
             "provider": "source_snapshots",
             "retrieved_at": utc_now(),
             "status": "ok",
             "exit_code": 0,
-            "results": [_retrieval_result(candidate) for candidate in candidates],
+            "results": [
+                result
+                for candidate in [*run_candidates, *run_excluded]
+                for result in _retrieval_results(candidate)
+            ],
         }
         payload = {
             "provider": "source_snapshots",
@@ -441,7 +539,7 @@ def _snapshot_main(argv) -> int:
             "requested_count": requested_count,
             "actual_count": len(run_candidates),
             "candidates": run_candidates,
-            "excluded": [_run_exclusion(exclusion) for exclusion in excluded],
+            "excluded": run_excluded,
         }
     except (OSError, json.JSONDecodeError, SyntaxError, RetrievalError) as error:
         print(

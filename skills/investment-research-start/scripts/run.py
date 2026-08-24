@@ -41,6 +41,7 @@ ORIGIN_HOSTS = {
     "product_hunt": {"producthunt.com", "www.producthunt.com"},
     "yc": {"ycombinator.com", "www.ycombinator.com"},
 }
+SOURCING_PROVENANCE_SOURCES = {"product_hunt", "yc", "hacker_news", "official_company"}
 SCORE_COVERAGE = {
     "Team": "team",
     "Product differentiation": "product",
@@ -298,6 +299,86 @@ def _allowed_signal_source(value: object, origins: list[dict], website: object) 
     }
 
 
+def _candidate_identity_matches(result: dict, candidate: dict) -> bool:
+    if result.get("candidate_name") != candidate.get("name"):
+        return False
+    expected_slug = candidate.get("slug")
+    if expected_slug is not None and result.get("candidate_slug") != expected_slug:
+        return False
+    expected_website = canonicalize_url(candidate.get("website"))
+    if expected_website is not None:
+        return canonicalize_url(result.get("candidate_website")) == expected_website
+    return result.get("candidate_website") in {None, ""}
+
+
+def _source_url_matches(actual: object, expected: object, source: str) -> bool:
+    if source in ORIGIN_HOSTS:
+        return _provenance_url(actual) == _provenance_url(expected)
+    return canonicalize_url(actual if isinstance(actual, str) else None) == canonicalize_url(
+        expected if isinstance(expected, str) else None
+    )
+
+
+def _signal_provenance_identity(
+    signal: dict, origins: list[dict], website: object
+) -> tuple[str, str] | None:
+    source_url = canonicalize_url(signal.get("source_url"))
+    if source_url is None:
+        return None
+    for origin in origins:
+        if (
+            isinstance(origin, dict)
+            and _origin_error(origin) is None
+            and _provenance_url(source_url) == _provenance_url(origin.get("canonical_url"))
+        ):
+            return str(origin["source"]), str(origin["source_id"])
+    if _is_official_hn_item(source_url):
+        match = re.fullmatch(r"id=(\d+)", urlsplit(source_url).query)
+        return ("hacker_news", match.group(1)) if match else None
+    if _host_matches_candidate(source_url, website):
+        return "official_company", source_url
+    return None
+
+
+def _validate_signal_provenance(
+    signal: dict,
+    origins: list[dict],
+    website: object,
+    candidate: dict,
+    retrieval_results: object,
+    errors: list[str],
+    label: str,
+) -> None:
+    identity = _signal_provenance_identity(signal, origins, website)
+    if identity is None:
+        return
+    source, source_id = identity
+    results = retrieval_results if isinstance(retrieval_results, list) else []
+    url_matches = [
+        result
+        for result in results
+        if isinstance(result, dict)
+        and _source_url_matches(result.get("url"), signal.get("source_url"), source)
+    ]
+    if not url_matches:
+        errors.append(f"{label} is absent from sourcing provenance")
+        return
+    identity_matches = [
+        result for result in url_matches if _candidate_identity_matches(result, candidate)
+    ]
+    if not identity_matches:
+        errors.append(f"{label} candidate identity does not match sourcing provenance")
+        return
+    source_matches = [
+        result for result in identity_matches if result.get("source") == source
+    ]
+    if not source_matches:
+        errors.append(f"{label} source does not match sourcing provenance")
+        return
+    if not any(result.get("source_id") == source_id for result in source_matches):
+        errors.append(f"{label} source_id does not match sourcing provenance")
+
+
 def _allowed_claim_source(value: object, candidate: dict) -> bool:
     canonical = canonicalize_url(value)
     if not canonical:
@@ -323,6 +404,7 @@ def _validate_origin_list(
     errors: list[str],
     label: str,
     retrieval_results: object = None,
+    owner: dict | None = None,
 ) -> list[dict]:
     if not isinstance(origins, list) or not origins:
         errors.append(f"{label} requires at least one Product Hunt or YC origin")
@@ -356,21 +438,40 @@ def _validate_origin_list(
                     f"{label} origin {index} is absent from sourcing provenance"
                 )
                 continue
+            identity_matches = [
+                result
+                for result in matches
+                if owner is not None and _candidate_identity_matches(result, owner)
+            ]
+            if not identity_matches:
+                errors.append(
+                    f"{label} origin {index} candidate identity does not match sourcing provenance"
+                )
+                continue
             source_matches = [
-                result for result in matches
-                if result.get("source") in {None, origin["source"]}
+                result for result in identity_matches if result.get("source") == origin["source"]
             ]
             if not source_matches:
                 errors.append(
                     f"{label} origin {index} provider/source does not match sourcing provenance"
                 )
                 continue
-            if not any(
-                result.get("source_id") in {None, origin["source_id"]}
+            id_matches = [
+                result
                 for result in source_matches
-            ):
+                if result.get("source_id") == origin["source_id"]
+            ]
+            if not id_matches:
                 errors.append(
                     f"{label} origin {index} source_id does not match sourcing provenance"
+                )
+                continue
+            if not any(
+                result.get("published_date") == origin["publication_or_batch_date"]
+                for result in id_matches
+            ):
+                errors.append(
+                    f"{label} origin {index} date does not match sourcing provenance"
                 )
     return valid
 
@@ -396,11 +497,12 @@ def _validate_assignment_candidate(
     if not website:
         errors.append(f"{label} requires an absolute HTTP(S) website URL with a hostname")
     origins = _validate_origin_list(
-        candidate.get("origins"), errors, label, retrieval_results
+        candidate.get("origins"), errors, label, retrieval_results, candidate
     )
     if "team_signal" not in candidate:
         errors.append(f"{label} requires nullable team_signal")
     team_signal = candidate.get("team_signal")
+    populated_signals: list[dict] = []
     if team_signal is not None:
         if not isinstance(team_signal, dict) or not _allowed_signal_source(
             team_signal.get("source_url") if isinstance(team_signal, dict) else None,
@@ -408,6 +510,17 @@ def _validate_assignment_candidate(
             website,
         ):
             errors.append(f"{label} team_signal requires an allowed source URL")
+        else:
+            populated_signals.append(team_signal)
+            _validate_signal_provenance(
+                team_signal,
+                origins,
+                website,
+                candidate,
+                retrieval_results,
+                errors,
+                f"{label} team_signal",
+            )
     signals = candidate.get("freshness_or_traction_signals")
     if not isinstance(signals, list) or not signals:
         errors.append(f"{label} requires at least one freshness_or_traction_signal")
@@ -425,6 +538,43 @@ def _validate_assignment_candidate(
                 errors.append(
                     f"{label} signal {signal_index} requires freshness/traction and an allowed source URL"
                 )
+            else:
+                populated_signals.append(signal)
+                _validate_signal_provenance(
+                    signal,
+                    origins,
+                    website,
+                    candidate,
+                    retrieval_results,
+                    errors,
+                    f"{label} signal {signal_index}",
+                )
+    source_urls = candidate.get("source_urls")
+    if not isinstance(source_urls, list) or not source_urls:
+        errors.append(f"{label} requires source_urls for every origin and populated signal")
+    else:
+        actual_source_urls = {
+            canonicalize_url(value) for value in source_urls if canonicalize_url(value)
+        }
+        if len(actual_source_urls) != len(source_urls):
+            errors.append(f"{label} source_urls must contain unique valid absolute URLs")
+        expected_source_urls = {
+            canonicalize_url(origin.get("canonical_url")) for origin in origins
+        } | {
+            canonicalize_url(signal.get("source_url")) for signal in populated_signals
+        }
+        expected_source_urls.discard(None)
+        missing_source_urls = sorted(expected_source_urls - actual_source_urls)
+        unexpected_source_urls = sorted(actual_source_urls - expected_source_urls)
+        if missing_source_urls:
+            errors.append(
+                f"{label} source_urls missing origin/signal URLs: {', '.join(missing_source_urls)}"
+            )
+        if unexpected_source_urls:
+            errors.append(
+                f"{label} source_urls contain URLs without origin/signal provenance: "
+                + ", ".join(unexpected_source_urls)
+            )
     reasons = candidate.get("thesis_fit_reasons")
     if not isinstance(reasons, list) or not reasons or not all(
         isinstance(reason, str) and reason.strip() for reason in reasons
@@ -453,6 +603,24 @@ def _validate_assignment_sourcing(
     seen_names: dict[str, str] = {}
     seen_domains: dict[str, str] = {}
     retrieval_results = retrieval.get("results") if isinstance(retrieval, dict) else None
+    if not isinstance(retrieval_results, list):
+        errors.append("sourcing retrieval results must be an array with provenance identity")
+    else:
+        for result_index, result in enumerate(retrieval_results):
+            result_label = f"sourcing retrieval result {result_index}"
+            if not isinstance(result, dict):
+                continue
+            if not isinstance(result.get("candidate_name"), str) or not result["candidate_name"].strip():
+                errors.append(f"{result_label} requires candidate identity name")
+            for field in ("candidate_slug", "candidate_website", "published_date"):
+                if field not in result:
+                    errors.append(f"{result_label} requires candidate identity/provenance field {field}")
+            if result.get("source") not in SOURCING_PROVENANCE_SOURCES:
+                errors.append(f"{result_label} requires an exact source")
+            if not isinstance(result.get("source_id"), str) or not result["source_id"].strip():
+                errors.append(f"{result_label} requires an exact nonempty source_id")
+            if canonicalize_url(result.get("url")) is None:
+                errors.append(f"{result_label} requires a valid absolute URL")
     for index, value in enumerate(candidates_value):
         candidate = _validate_assignment_candidate(
             value, index, errors, retrieval_results
@@ -485,6 +653,7 @@ def _validate_assignment_sourcing(
             errors,
             f"exclusion {name or index}",
             retrieval_results,
+            value,
         )
         excluded.append(value)
     return candidates, excluded
@@ -954,7 +1123,9 @@ def _validate_completion_contract(
     errors: list[str] = []
     if stage == "sourcing":
         retrieval_path = run_dir / "sourcing" / "retrieval.json"
-        _validate_retrieval(retrieval_path, errors, "sourcing retrieval")
+        _validate_retrieval(
+            retrieval_path, errors, "sourcing retrieval", max_results=None
+        )
         retrieval = _add_json_error(retrieval_path, errors, "sourcing retrieval") or {}
         candidates = _add_json_error(
             run_dir / "sourcing" / "candidates.json", errors, "candidates"
@@ -1226,7 +1397,7 @@ def _add_json_error(path: Path, errors: list[str], label: str):
 
 
 def _validate_retrieval(
-    path: Path, errors: list[str], label: str, *, max_results: int = 20
+    path: Path, errors: list[str], label: str, *, max_results: int | None = 20
 ) -> set[str]:
     value = _add_json_error(path, errors, label)
     urls = set()
@@ -1250,7 +1421,7 @@ def _validate_retrieval(
     if not isinstance(value.get("results"), list):
         errors.append(f"{label} results must be an array")
         return urls
-    if len(value["results"]) > max_results:
+    if max_results is not None and len(value["results"]) > max_results:
         errors.append(f"{label} contains more than {max_results} results")
     for result in value["results"]:
         if not isinstance(result, dict):
@@ -1365,11 +1536,53 @@ NARRATIVE_REFERENCE = re.compile(
     r"\s*\[refs:\s*([A-Za-z0-9_.-]+(?:\s*,\s*[A-Za-z0-9_.-]+)*)\]\s*$"
 )
 FACTUAL_NARRATIVE = re.compile(
-    r"(?:[$€£₹]|\b\d+(?:\.\d+)?%?\b|\b(?:arr|mrr|revenue|retention|churn|"
+    r"(?:[$€£₹]\s*\d|\b\d+(?:\.\d+)?%|\b(?:arr|mrr|revenue|retention|churn|"
     r"customers?|users?|employees?|founded|launched|raised|growth|grew|declined|"
-    r"increased|decreased|contracts?|sales|market share)\b)",
+    r"increased|decreased|contracts?|sales|market share|signed|pilots?)\b)",
     re.IGNORECASE,
 )
+ASSERTIVE_NARRATIVE = re.compile(
+    r"\b(?:is|are|was|were|has|have|had|reports?|reported|signed|serves?|offers?|"
+    r"provides?|grew|declined|increased|decreased|fell|reached|generated)\b",
+    re.IGNORECASE,
+)
+UNCERTAINTY_NARRATIVE = re.compile(
+    r"\b(?:could|may|might|whether|unknown|unclear|unverified|"
+    r"needs? (?:confirmation|verification))\b",
+    re.IGNORECASE,
+)
+
+
+def _is_pure_uncertainty(statement: str) -> bool:
+    if re.match(r"^(?:verify|confirm)\b", statement, re.IGNORECASE):
+        return True
+    uncertainty = UNCERTAINTY_NARRATIVE.search(statement)
+    is_question = statement.rstrip().endswith("?")
+    if not uncertainty and not is_question:
+        return False
+    boundary = uncertainty.start() if uncertainty else len(statement)
+    premise = statement[:boundary]
+    if re.search(r"[,;]|\bbut\b", premise, re.IGNORECASE):
+        clauses = re.split(r"[,;]|\bbut\b", premise, flags=re.IGNORECASE)
+        return not any(
+            FACTUAL_NARRATIVE.search(clause) and ASSERTIVE_NARRATIVE.search(clause)
+            for clause in clauses
+        )
+    return not (
+        FACTUAL_NARRATIVE.search(premise) and ASSERTIVE_NARRATIVE.search(premise)
+    )
+
+
+def _narrative_content(stripped: str) -> tuple[str, str]:
+    heading = re.match(r"^#{1,6}\s+(.+?)\s*$", stripped)
+    if heading:
+        return "heading", heading.group(1).strip()
+    if stripped.startswith("|"):
+        return "table", stripped.strip("|").strip()
+    bullet = re.match(r"^[-*]\s+(.+)$", stripped)
+    if bullet:
+        return "bullet", bullet.group(1).strip()
+    return "prose", stripped
 
 
 def _validate_analysis_narrative(
@@ -1382,23 +1595,20 @@ def _validate_analysis_narrative(
     section = ""
     for line_number, raw_line in enumerate(text.splitlines(), start=1):
         stripped = raw_line.strip()
-        heading = re.match(r"^#{1,6}\s+(.+?)\s*$", stripped)
-        if heading:
-            section = heading.group(1).casefold()
+        if not stripped:
             continue
-        if not stripped or stripped.startswith("|"):
-            continue
-        if stripped.strip("*_").casefold() in {"pass", "watch", "take a meeting"}:
-            continue
-        bullet = re.match(r"^[-*]\s+(.+)$", stripped)
-        narrative = bullet.group(1).strip() if bullet else stripped
+        representation, narrative = _narrative_content(stripped)
         reference_match = NARRATIVE_REFERENCE.search(narrative)
+        statement = (
+            narrative[: reference_match.start()].strip()
+            if reference_match
+            else narrative
+        )
+        if representation == "heading":
+            section = statement.casefold()
+        if statement.strip("*_").casefold() in {"pass", "watch", "take a meeting"}:
+            continue
         if reference_match:
-            if bullet is None:
-                errors.append(
-                    f"analysis narrative for {name} at line {line_number} must use a structured bullet"
-                )
-            statement = narrative[: reference_match.start()].strip()
             if not statement:
                 errors.append(f"empty narrative statement for {name} at line {line_number}")
             for claim_id in [
@@ -1412,30 +1622,12 @@ def _validate_analysis_narrative(
                     used_claim_ids.add(claim_id)
             continue
         factual = FACTUAL_NARRATIVE.search(narrative) is not None
-        clearly_open_risk = (
-            section == "risks and open questions"
-            and (
-                narrative.endswith("?")
-                or re.match(r"^(?:verify|confirm)\b", narrative, re.IGNORECASE)
-                or re.search(
-                    r"\b(?:risk|unknown|unclear|unverified|could|may|might|whether|"
-                    r"needs? (?:confirmation|verification))\b",
-                    narrative,
-                    re.IGNORECASE,
-                )
+        if factual and not _is_pure_uncertainty(narrative):
+            errors.append(
+                f"factual narrative for {name} at line {line_number} requires a trailing "
+                "[refs: claim-id] list"
             )
-        )
-        if clearly_open_risk:
             continue
-        if bullet is None:
-            errors.append(
-                f"analysis narrative for {name} at line {line_number} must use a structured bullet"
-            )
-        else:
-            errors.append(
-                f"{'factual narrative' if factual else 'narrative bullet'} for {name} "
-                f"at line {line_number} requires a trailing [refs: claim-id] list"
-            )
 
 
 def _parse_analysis(
@@ -1637,7 +1829,10 @@ def _validate_new(run_dir: Path) -> dict:
         errors.append("candidates.json must be an object")
         sourcing = {}
     sourcing_urls = _validate_retrieval(
-        run_dir / "sourcing" / "retrieval.json", errors, "sourcing retrieval"
+        run_dir / "sourcing" / "retrieval.json",
+        errors,
+        "sourcing retrieval",
+        max_results=None,
     )
     try:
         sourcing_retrieval = read_json(run_dir / "sourcing" / "retrieval.json")
