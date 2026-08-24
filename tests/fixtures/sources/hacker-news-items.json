@@ -1,0 +1,20 @@
+[
+  {
+    "id": 987654,
+    "type": "story",
+    "title": "Show HN: Acme AI – workflow automation for investment teams",
+    "url": "https://acme.example/launch",
+    "time": 1787227200,
+    "score": 87,
+    "descendants": 24
+  },
+  {
+    "id": 987655,
+    "type": "story",
+    "title": "Show HN: A.C.M.E. AI",
+    "url": "https://other.example/launch",
+    "time": 1787227200,
+    "score": 3,
+    "descendants": 1
+  }
+]

@@ -1,0 +1,14 @@
+{
+  "companies": [
+    {
+      "id": 42,
+      "name": "Acme AI",
+      "slug": "acme-ai",
+      "website": "https://acme.example/",
+      "one_liner": "Automates diligence workflows for investment teams.",
+      "batch": "S24",
+      "launched_at": "2024-06-01",
+      "url": "https://www.ycombinator.com/companies/acme-ai"
+    }
+  ]
+}
