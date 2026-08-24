@@ -2,6 +2,8 @@
 
 A small, portable skill package for evidence-bound startup investment research. It follows the [Agent Skills specification](https://agentskills.io/specification) and has a focused entry-point pattern. One entry-point skill coordinates four focused stages; three self-contained Python helpers provide run state, Exa retrieval, atomic writes, and validation.
 
+[Walkthrough Video](https://drive.google.com/file/d/1X6fQWyiqrMcG8SJrori5fE86TBcr3EA-/view?usp=sharing)
+
 ## Architecture
 
 ```text
