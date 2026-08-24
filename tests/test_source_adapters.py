@@ -7,6 +7,17 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES_SCRIPT = ROOT / "skills" / "investment-research-sourcing" / "scripts" / "sources.py"
 FIXTURES = ROOT / "tests" / "fixtures" / "sources"
+CANDIDATE_FIELDS = {
+    "name",
+    "slug",
+    "website",
+    "one_line_description",
+    "origins",
+    "team_signal",
+    "freshness_or_traction_signals",
+    "thesis_fit_reasons",
+    "rank",
+}
 
 
 def load_sources():
@@ -28,6 +39,13 @@ class SourceAdapterTests(unittest.TestCase):
 
         self.assertEqual(len(records), 1)
         record = records[0]
+        yc_source_url = "https://www.ycombinator.com/companies/acme-ai"
+        expected_yc_origins = [{
+            "source": "yc",
+            "canonical_url": yc_source_url,
+            "source_id": "42",
+            "publication_or_batch_date": "S24",
+        }]
         self.assertEqual(record["name"], "Acme AI")
         self.assertEqual(record["slug"], "acme-ai")
         self.assertEqual(record["website"], "https://acme.example/pricing")
@@ -49,17 +67,59 @@ class SourceAdapterTests(unittest.TestCase):
 
         self.assertEqual(len(records), 1)
         record = records[0]
+        self.assertEqual(record["name"], "Acme AI")
+        self.assertEqual(record["slug"], "acme-ai")
         self.assertEqual(record["website"], "https://acme.example")
-        self.assertEqual(record["one_line_description"], "Automates diligence workflows for investment teams.")
         self.assertEqual(
-            record["origins"][0],
-            {
-                "source": "yc",
-                "canonical_url": "https://www.ycombinator.com/companies/acme-ai",
-                "source_id": "42",
-                "publication_or_batch_date": "S24",
-            },
+            record["one_line_description"],
+            "Automates diligence workflows for investment teams.",
         )
+        self.assertEqual(record["origins"], expected_yc_origins)
+        self.assertIsNone(record["team_signal"])
+        self.assertTrue(record["freshness_or_traction_signals"])
+        self.assertEqual(
+            {signal["kind"] for signal in record["freshness_or_traction_signals"]},
+            {"freshness"},
+        )
+        self.assertEqual(
+            {
+                signal["source_url"]
+                for signal in record["freshness_or_traction_signals"]
+            },
+            {yc_source_url},
+        )
+
+        record["thesis_fit_reasons"] = ["Automates investment-team workflows."]
+        candidates, excluded = self.sources.normalize_candidates(records)
+
+        self.assertEqual(excluded, [])
+        self.assertEqual(len(candidates), 1)
+        candidate = candidates[0]
+        self.assertEqual(set(candidate), CANDIDATE_FIELDS)
+        self.assertEqual(candidate["name"], "Acme AI")
+        self.assertEqual(candidate["slug"], "acme-ai")
+        self.assertEqual(candidate["origins"], expected_yc_origins)
+        self.assertIsNone(candidate["team_signal"])
+        self.assertTrue(candidate["freshness_or_traction_signals"])
+        self.assertEqual(
+            {
+                signal["kind"]
+                for signal in candidate["freshness_or_traction_signals"]
+            },
+            {"freshness"},
+        )
+        self.assertEqual(
+            {
+                signal["source_url"]
+                for signal in candidate["freshness_or_traction_signals"]
+            },
+            {yc_source_url},
+        )
+        self.assertEqual(
+            candidate["thesis_fit_reasons"],
+            ["Automates investment-team workflows."],
+        )
+        self.assertEqual(candidate["rank"], 1)
 
     def test_source_domain_enforcement_accepts_only_matching_origin_domains(self):
         cases = [
@@ -71,6 +131,7 @@ class SourceAdapterTests(unittest.TestCase):
             ("product_hunt", "https://www.ycombinator.com/companies/acme", False),
             ("yc", "https://www.producthunt.com/posts/acme", False),
             ("hacker_news", "https://news.ycombinator.com/item?id=987654", False),
+            ("blog", "https://www.producthunt.com/posts/acme", False),
         ]
 
         for source, canonical_url, expected in cases:
@@ -124,18 +185,7 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertEqual(excluded, [])
         self.assertEqual(len(candidates), 1)
         candidate = candidates[0]
-        required_fields = {
-            "name",
-            "slug",
-            "website",
-            "one_line_description",
-            "origins",
-            "team_signal",
-            "freshness_or_traction_signals",
-            "thesis_fit_reasons",
-            "rank",
-        }
-        self.assertEqual(set(candidate), required_fields)
+        self.assertEqual(set(candidate), CANDIDATE_FIELDS)
         self.assertEqual(candidate["name"], "Acme AI")
         self.assertEqual(candidate["slug"], "acme-ai")
         self.assertEqual(candidate["website"], "https://acme.example")
@@ -143,13 +193,83 @@ class SourceAdapterTests(unittest.TestCase):
             candidate["one_line_description"],
             "Automates diligence workflows for investment teams.",
         )
-        self.assertEqual(len(candidate["origins"]), 2)
-        self.assertEqual({origin["source"] for origin in candidate["origins"]}, {"product_hunt", "yc"})
+        self.assertCountEqual(
+            candidate["origins"],
+            [
+                {
+                    "source": "product_hunt",
+                    "canonical_url": "https://www.producthunt.com/posts/acme-ai",
+                    "source_id": "tag:producthunt.com,2026-08-20:post/12345",
+                    "publication_or_batch_date": "2026-08-20T12:00:00Z",
+                },
+                {
+                    "source": "yc",
+                    "canonical_url": "https://www.ycombinator.com/companies/acme-ai",
+                    "source_id": "42",
+                    "publication_or_batch_date": "S24",
+                },
+            ],
+        )
         self.assertIsNone(candidate["team_signal"])
         self.assertTrue(candidate["freshness_or_traction_signals"])
-        self.assertTrue(all(signal.get("source_url") for signal in candidate["freshness_or_traction_signals"]))
+        self.assertTrue(
+            all(
+                signal.get("source_url")
+                for signal in candidate["freshness_or_traction_signals"]
+            )
+        )
         self.assertEqual(candidate["thesis_fit_reasons"], ["Automates investment-team workflows."])
         self.assertEqual(candidate["rank"], 1)
+
+    def test_cross_source_records_fall_back_to_normalized_name_without_two_usable_domains(self):
+        product_hunt_origin = {
+            "source": "product_hunt",
+            "canonical_url": "https://www.producthunt.com/posts/fallback-ai",
+            "source_id": "fallback-ai-launch",
+            "publication_or_batch_date": "2026-08-21T12:00:00Z",
+        }
+        yc_origin = {
+            "source": "yc",
+            "canonical_url": "https://www.ycombinator.com/companies/fallback-ai",
+            "source_id": "84",
+            "publication_or_batch_date": "S26",
+        }
+        product_hunt = {
+            "name": "Fallback.AI",
+            "slug": "fallback-ai",
+            "website": "https://fallback.example/launch",
+            "one_line_description": "Automates fallback research workflows.",
+            "origins": [product_hunt_origin],
+            "team_signal": None,
+            "freshness_or_traction_signals": [{
+                "kind": "freshness",
+                "source_url": product_hunt_origin["canonical_url"],
+            }],
+            "thesis_fit_reasons": ["Automates investment-team workflows."],
+        }
+        yc = {
+            "name": "Fallback AI",
+            "slug": "fallback-ai",
+            "website": None,
+            "one_line_description": "Automates fallback research workflows.",
+            "origins": [yc_origin],
+            "team_signal": None,
+            "freshness_or_traction_signals": [{
+                "kind": "freshness",
+                "source_url": yc_origin["canonical_url"],
+            }],
+            "thesis_fit_reasons": ["Automates investment-team workflows."],
+        }
+
+        candidates, excluded = self.sources.normalize_candidates([product_hunt, yc])
+
+        self.assertEqual(excluded, [])
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["website"], "https://fallback.example/launch")
+        self.assertCountEqual(
+            candidates[0]["origins"],
+            [product_hunt_origin, yc_origin],
+        )
 
     def test_hacker_news_domain_match_beats_name_match_and_adds_signals_only(self):
         product_hunt = self.sources.parse_product_hunt_atom(
@@ -195,6 +315,10 @@ class SourceAdapterTests(unittest.TestCase):
             "rank": 1,
         }
         items = json.loads((FIXTURES / "hacker-news-items.json").read_text(encoding="utf-8"))
+        origin_sources_before = {
+            origin["source"] for origin in candidate["origins"]
+        }
+        self.assertEqual(origin_sources_before, {"yc"})
 
         enriched = self.sources.enrich_with_hacker_news([candidate], items)
 
@@ -203,7 +327,11 @@ class SourceAdapterTests(unittest.TestCase):
             {signal["kind"] for signal in enriched[0]["freshness_or_traction_signals"] if signal.get("source_url") == hn_url},
             {"freshness", "traction"},
         )
-        self.assertEqual(enriched[0]["origins"], candidate["origins"])
+        origin_sources_after = {
+            origin["source"] for origin in enriched[0]["origins"]
+        }
+        self.assertEqual(origin_sources_after, {"yc"})
+        self.assertEqual(origin_sources_after, origin_sources_before)
 
     def test_missing_signal_is_excluded_with_origin_provenance(self):
         record = {
@@ -215,7 +343,7 @@ class SourceAdapterTests(unittest.TestCase):
                 "source": "yc",
                 "canonical_url": "https://www.ycombinator.com/companies/quiet-co",
                 "source_id": "quiet-co",
-                "publication_or_batch_date": None,
+                "publication_or_batch_date": "S26",
             }],
             "team_signal": None,
             "freshness_or_traction_signals": [],
