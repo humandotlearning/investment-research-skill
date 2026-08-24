@@ -1,7 +1,7 @@
 ---
 name: investment-research-start
 description: Use when starting or resuming a structured startup investment-research run from a topic, URL list, or feed.
-compatibility: Requires Python 3.10+ and network access for Exa or agent-native web search
+compatibility: Requires Python 3.10+ and Product Hunt/YC source access through the Codex pipeline or local snapshots; Exa is legacy-only
 ---
 
 # Investment research entry point
@@ -11,7 +11,7 @@ Create and manage one evidence-bound research run. Keep the run directory as the
 ## Workflow
 
 1. Locate a working Python 3.10+ interpreter. Never install Python or repair aliases automatically.
-2. Run `scripts/run.py preflight`. Exa is preferred when ready. If Exa is unavailable, use the current agent's native web-search capability and mark every fallback retrieval envelope with `provider: web`. If neither works, record a failed stage and surface the preflight remediation.
+2. Run `scripts/run.py preflight`. Assignment runs use `recommended_provider: source_snapshots`. Use the Codex pipeline to gather source snapshots from Product Hunt and YC, with optional Hacker News enrichment, or provide equivalent local snapshots. Treat Exa readiness as a legacy compatibility diagnostic, never the preferred assignment path. If Python or required source access is unavailable, record a failed stage and surface the preflight remediation.
 3. Prepare `input.json` and `thesis.md`, then run `scripts/run.py init`. Use the returned run only when it is new or resumable.
 4. Activate `investment-research-sourcing`, then `investment-research-evidence`, `investment-research-analysis`, and `investment-research-memo` in that order.
 5. Update each stage with `scripts/run.py stage`. Mark a stage completed only after its artifacts exist and validate.

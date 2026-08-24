@@ -35,8 +35,8 @@ class RunScriptTests(unittest.TestCase):
                 )
 
         self.assertEqual((key, source), ("process-secret", "environment"))
-        self.assertEqual(result["status"], "degraded")
-        self.assertEqual(result["recommended_provider"], "web")
+        self.assertEqual(result["status"], "ready")
+        self.assertEqual(result["recommended_provider"], "source_snapshots")
         self.assertNotIn("process-secret", json.dumps(result))
 
     def test_key_lookup_finds_repository_env_from_nested_directory(self):
@@ -58,9 +58,23 @@ class RunScriptTests(unittest.TestCase):
                 sdk_available=True, network_status="unreachable"
             )
         self.assertTrue(ready["exa_ready"])
-        self.assertEqual(ready["recommended_provider"], "exa")
+        self.assertTrue(ready["snapshot_pipeline_ready"])
+        self.assertEqual(ready["recommended_provider"], "source_snapshots")
         self.assertFalse(degraded["exa_ready"])
+        self.assertFalse(degraded["snapshot_pipeline_ready"])
+        self.assertEqual(degraded["recommended_provider"], "none")
         self.assertEqual(degraded["failure_class"], "network_unavailable")
+
+    def test_preflight_recommends_source_snapshots_with_exa_as_diagnostics_only(self):
+        with patch.dict(os.environ, {"EXA_API_KEY": "secret"}, clear=True):
+            result = self.run_module.preflight(
+                sdk_available=True, network_status="reachable"
+            )
+
+        self.assertTrue(result["exa_ready"])
+        self.assertTrue(result.get("snapshot_pipeline_ready"))
+        self.assertEqual(result["recommended_provider"], "source_snapshots")
+        self.assertNotEqual(result["recommended_provider"], "exa")
 
     def test_preflight_output_write_failure_returns_code_six(self):
         with patch.object(

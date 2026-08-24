@@ -76,6 +76,15 @@ class PackageContractTests(unittest.TestCase):
             self.assertIn(phrase, text)
         self.assertNotIn("prefer `scripts/search.py --input", text)
 
+    def test_entry_skill_uses_source_snapshot_codex_pipeline_preflight(self):
+        text = (SKILLS / "investment-research-start" / "SKILL.md").read_text(
+            encoding="utf-8"
+        ).lower()
+
+        for phrase in ["source snapshots", "codex pipeline", "source_snapshots"]:
+            self.assertIn(phrase, text)
+        self.assertNotIn("exa is preferred", text)
+
     def test_package_has_only_four_helpers_and_they_compile(self):
         scripts = sorted(
             path.relative_to(ROOT).as_posix()

@@ -131,38 +131,29 @@ def preflight(
                 "remediation": "Use a working Python 3.10+ interpreter; do not rely on a broken alias.",
             }
         )
-    if not key:
-        failures.append(
-            {
-                "class": "missing_api_key",
-                "remediation": "Set EXA_API_KEY or use the native web fallback.",
-            }
-        )
-    if not sdk_available:
-        failures.append(
-            {
-                "class": "missing_sdk",
-                "remediation": "Use an existing exa-py installation or the native web fallback.",
-            }
-        )
     if network_status == "unreachable":
         failures.append(
             {
                 "class": "network_unavailable",
-                "remediation": "Use the native web fallback or retry where provider access is allowed.",
+                "remediation": "Retry the Codex source pipeline where Product Hunt and YC snapshot access is allowed, or provide local snapshots.",
             }
         )
 
     exa_ready = bool(
         runtime_usable and key and sdk_available and network_status != "unreachable"
     )
+    snapshot_pipeline_ready = bool(
+        runtime_usable and network_status != "unreachable"
+    )
     failure_class = failures[0]["class"] if failures else None
     if network_status == "unreachable":
         failure_class = "network_unavailable"
-    elif key and not sdk_available:
-        failure_class = "missing_sdk"
     return {
-        "status": "ready" if exa_ready else ("degraded" if runtime_usable else "blocked"),
+        "status": (
+            "ready"
+            if snapshot_pipeline_ready
+            else ("degraded" if runtime_usable else "blocked")
+        ),
         "runtime": {
             "usable": runtime_usable,
             "executable": sys.executable,
@@ -173,7 +164,10 @@ def preflight(
         "exa_sdk_available": bool(sdk_available),
         "network_status": network_status,
         "exa_ready": exa_ready,
-        "recommended_provider": "exa" if exa_ready else ("web" if runtime_usable else "none"),
+        "snapshot_pipeline_ready": snapshot_pipeline_ready,
+        "recommended_provider": (
+            "source_snapshots" if snapshot_pipeline_ready else "none"
+        ),
         "failure_class": failure_class,
         "failures": failures,
     }
