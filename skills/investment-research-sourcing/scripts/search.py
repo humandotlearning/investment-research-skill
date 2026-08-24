@@ -1,8 +1,9 @@
-"""Retrieve a bounded Exa candidate set and write a compact JSON artifact."""
+"""Run offline assignment sourcing or the legacy Exa retrieval helper."""
 
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import sys
@@ -258,7 +259,7 @@ def _failure_envelope(query: str, error: RetrievalError, api_key: str | None) ->
     return payload
 
 
-def main(argv=None) -> int:
+def _legacy_main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--thesis", type=Path, required=True)
@@ -299,6 +300,85 @@ def main(argv=None) -> int:
     if code:
         print(payload.get("error", "retrieval failed"), file=sys.stderr)
     return code
+
+
+def _load_source_adapters():
+    path = Path(__file__).with_name("sources.py")
+    spec = importlib.util.spec_from_file_location("assignment_source_adapters", path)
+    if spec is None or spec.loader is None:
+        raise RetrievalError("assignment source adapters are unavailable", EXIT_RUNTIME)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _snapshot_main(argv) -> int:
+    parser = argparse.ArgumentParser(
+        description="Normalize Product Hunt and YC snapshots with optional HN enrichment."
+    )
+    parser.add_argument("--product-hunt", type=Path, required=True)
+    parser.add_argument("--yc", type=Path, required=True)
+    parser.add_argument("--hacker-news", type=Path)
+    parser.add_argument("--output", type=Path, required=True)
+    args = parser.parse_args(argv)
+    try:
+        adapters = _load_source_adapters()
+        product_hunt = adapters.parse_product_hunt_atom(
+            args.product_hunt.read_text(encoding="utf-8")
+        )
+        yc = adapters.normalize_yc_snapshot(
+            json.loads(args.yc.read_text(encoding="utf-8"))
+        )
+        candidates, excluded = adapters.normalize_candidates(product_hunt + yc)
+        if args.hacker_news is not None:
+            items = json.loads(args.hacker_news.read_text(encoding="utf-8"))
+            candidates = adapters.enrich_with_hacker_news(candidates, items)
+        payload = {
+            "provider": "official_snapshots",
+            "actual_count": len(candidates),
+            "candidates": candidates,
+            "excluded": excluded,
+        }
+    except (OSError, json.JSONDecodeError, SyntaxError, RetrievalError) as error:
+        print(
+            json.dumps(
+                {"status": "failed", "exit_code": EXIT_INPUT, "error": str(error)},
+                separators=(",", ":"),
+            ),
+            file=sys.stderr,
+        )
+        return EXIT_INPUT
+    try:
+        atomic_write_json(args.output, payload)
+    except (OSError, TypeError, ValueError) as error:
+        print(
+            json.dumps(
+                {"status": "failed", "exit_code": EXIT_WRITE, "error": str(error)},
+                separators=(",", ":"),
+            ),
+            file=sys.stderr,
+        )
+        return EXIT_WRITE
+    print(
+        json.dumps(
+            {
+                "status": "ok",
+                "provider": payload["provider"],
+                "output": str(args.output),
+                "exit_code": 0,
+                "result_count": payload["actual_count"],
+            },
+            separators=(",", ":"),
+        )
+    )
+    return 0
+
+
+def main(argv=None) -> int:
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments[:1] == ["snapshots"]:
+        return _snapshot_main(arguments[1:])
+    return _legacy_main(arguments)
 
 
 if __name__ == "__main__":

@@ -121,6 +121,17 @@ class SourceAdapterTests(unittest.TestCase):
         )
         self.assertEqual(candidate["rank"], 1)
 
+    def test_normalizes_a_direct_yc_company_profile_snapshot(self):
+        directory = json.loads(
+            (FIXTURES / "yc-companies.json").read_text(encoding="utf-8")
+        )
+
+        records = self.sources.normalize_yc_snapshot(directory["companies"][0])
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["name"], "Acme AI")
+        self.assertEqual(records[0]["origins"][0]["source"], "yc")
+
     def test_source_domain_enforcement_accepts_only_matching_origin_domains(self):
         cases = [
             ("product_hunt", "https://www.producthunt.com/posts/acme", True),
@@ -355,6 +366,41 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertEqual(candidates, [])
         self.assertEqual(excluded[0]["origins"], record["origins"])
         self.assertIn("missing freshness or traction signal", excluded[0]["reason"])
+
+    def test_candidate_signal_must_link_to_its_origin_or_an_official_hn_item(self):
+        origin = {
+            "source": "yc",
+            "canonical_url": "https://www.ycombinator.com/companies/signal-co",
+            "source_id": "signal-co",
+            "publication_or_batch_date": "S26",
+        }
+
+        def record(source_url):
+            return {
+                "name": "Signal Co",
+                "slug": "signal-co",
+                "website": "https://signal.example",
+                "one_line_description": "Tracks trusted research signals.",
+                "origins": [origin],
+                "team_signal": None,
+                "freshness_or_traction_signals": [{
+                    "kind": "freshness",
+                    "source_url": source_url,
+                }],
+                "thesis_fit_reasons": ["Improves research workflows."],
+            }
+
+        untrusted, excluded = self.sources.normalize_candidates([
+            record("https://untrusted.example/freshness")
+        ])
+        trusted, trusted_excluded = self.sources.normalize_candidates([
+            record("https://news.ycombinator.com/item?id=12345")
+        ])
+
+        self.assertEqual(untrusted, [])
+        self.assertIn("trusted source", excluded[0]["reason"])
+        self.assertEqual(len(trusted), 1)
+        self.assertEqual(trusted_excluded, [])
 
     def test_ranking_is_deterministic_regardless_of_input_order(self):
         def record(name):

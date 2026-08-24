@@ -57,6 +57,21 @@ class PackageContractTests(unittest.TestCase):
         for phrase in ["claude code", "codex", "hermes", "openclaw", "exa", "web fallback"]:
             self.assertIn(phrase, readme)
 
+    def test_sourcing_skill_uses_snapshot_adapters_for_the_assignment_path(self):
+        text = (SKILLS / "investment-research-sourcing" / "SKILL.md").read_text(
+            encoding="utf-8"
+        ).lower()
+
+        for phrase in [
+            "scripts/search.py snapshots",
+            "--product-hunt",
+            "--yc",
+            "--hacker-news",
+            "legacy exa",
+        ]:
+            self.assertIn(phrase, text)
+        self.assertNotIn("prefer `scripts/search.py --input", text)
+
     def test_package_has_only_four_helpers_and_they_compile(self):
         scripts = sorted(
             path.relative_to(ROOT).as_posix()

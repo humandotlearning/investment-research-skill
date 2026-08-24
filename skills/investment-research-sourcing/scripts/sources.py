@@ -8,7 +8,7 @@ import re
 import xml.etree.ElementTree as element_tree
 from datetime import datetime, timezone
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qs, urlsplit, urlunsplit
 
 
 ATOM_NAMESPACE = "{http://www.w3.org/2005/Atom}"
@@ -87,6 +87,33 @@ def _is_signal(signal: Any) -> bool:
     )
 
 
+def _is_official_hn_item_url(value: Any) -> bool:
+    parsed = urlsplit(str(value or "").strip())
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    return (
+        parsed.scheme.lower() == "https"
+        and parsed.hostname == "news.ycombinator.com"
+        and parsed.path == "/item"
+        and set(query) == {"id"}
+        and len(query["id"]) == 1
+        and query["id"][0].isdigit()
+    )
+
+
+def _is_trusted_signal(signal: Any, origins: list[dict]) -> bool:
+    if not _is_signal(signal):
+        return False
+    source_url = signal["source_url"]
+    if _is_official_hn_item_url(source_url):
+        return True
+    canonical_source_url = _canonicalize_url(source_url)
+    return canonical_source_url is not None and any(
+        canonical_source_url == _canonicalize_url(origin.get("canonical_url"))
+        for origin in origins
+        if origin_is_allowed(origin)
+    )
+
+
 def origin_is_allowed(origin: Any) -> bool:
     """Return whether an origin has an approved source name and exact host."""
     if not isinstance(origin, dict):
@@ -154,7 +181,12 @@ def parse_product_hunt_atom(atom_text: str) -> list[dict]:
 
 def normalize_yc_snapshot(snapshot: Any) -> list[dict]:
     """Normalize public YC company-directory/profile snapshots into source records."""
-    companies = snapshot.get("companies", []) if isinstance(snapshot, dict) else snapshot
+    if isinstance(snapshot, dict) and "companies" in snapshot:
+        companies = snapshot["companies"]
+    elif isinstance(snapshot, dict):
+        companies = [snapshot]
+    else:
+        companies = snapshot
     if not isinstance(companies, list):
         return []
     records = []
@@ -204,8 +236,10 @@ def _record_reason(record: Any) -> str | None:
     if not all(record.get(field) for field in ("name", "slug", "one_line_description")):
         return "missing required candidate field"
     signals = record.get("freshness_or_traction_signals")
-    if not isinstance(signals, list) or not any(_is_signal(signal) for signal in signals):
-        return "missing freshness or traction signal"
+    if not isinstance(signals, list) or not any(
+        _is_trusted_signal(signal, origins) for signal in signals
+    ):
+        return "missing freshness or traction signal from a trusted source"
     if not isinstance(record.get("thesis_fit_reasons"), list):
         return "missing thesis fit reasons"
     return None
@@ -264,7 +298,12 @@ def _merge_records(records: list[dict]) -> dict:
         [origin for record in records for origin in record["origins"]], _origin_sort_key
     )
     signals = _unique_sorted(
-        [signal for record in records for signal in record["freshness_or_traction_signals"] if _is_signal(signal)],
+        [
+            signal
+            for record in records
+            for signal in record["freshness_or_traction_signals"]
+            if _is_trusted_signal(signal, record["origins"])
+        ],
         _signal_sort_key,
     )
     reasons = sorted(

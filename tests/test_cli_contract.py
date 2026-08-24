@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 RUN = ROOT / "skills" / "investment-research-start" / "scripts" / "run.py"
 SEARCH = ROOT / "skills" / "investment-research-sourcing" / "scripts" / "search.py"
 RESEARCH = ROOT / "skills" / "investment-research-evidence" / "scripts" / "research.py"
+SOURCE_FIXTURES = ROOT / "tests" / "fixtures" / "sources"
 
 
 class CliContractTests(unittest.TestCase):
@@ -43,6 +44,41 @@ class CliContractTests(unittest.TestCase):
         self.assertEqual(payload["exit_code"], 4)
         self.assertEqual(payload["status"], "failed")
         self.assertNotIn("EXA_API_KEY=", result.stdout + result.stderr)
+
+    def test_search_snapshot_mode_writes_normalized_candidates_without_exa(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "candidates.json"
+            env = os.environ.copy()
+            env.pop("EXA_API_KEY", None)
+
+            result = self.run_cli(
+                SEARCH,
+                "snapshots",
+                "--product-hunt", SOURCE_FIXTURES / "product-hunt.atom",
+                "--yc", SOURCE_FIXTURES / "yc-companies.json",
+                "--hacker-news", SOURCE_FIXTURES / "hacker-news-items.json",
+                "--output", output,
+                cwd=root,
+                env=env,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(payload["provider"], "official_snapshots")
+        self.assertEqual(payload["actual_count"], 1)
+        self.assertEqual(payload["excluded"], [])
+        candidate = payload["candidates"][0]
+        self.assertEqual(
+            {origin["source"] for origin in candidate["origins"]},
+            {"product_hunt", "yc"},
+        )
+        self.assertNotIn("hacker_news", {origin["source"] for origin in candidate["origins"]})
+        self.assertIn(
+            "https://news.ycombinator.com/item?id=987654",
+            {signal["source_url"] for signal in candidate["freshness_or_traction_signals"]},
+        )
 
     def test_research_rejects_empty_retry_with_code_two(self):
         with tempfile.TemporaryDirectory() as directory:
