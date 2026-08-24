@@ -1,5 +1,14 @@
 [
   {
+    "id": 987655,
+    "type": "story",
+    "title": "Show HN: Acme AI – workflow automation for investment teams",
+    "url": "https://other.example/launch",
+    "time": 1787227200,
+    "score": 3,
+    "descendants": 1
+  },
+  {
     "id": 987654,
     "type": "story",
     "title": "Show HN: Acme AI – workflow automation for investment teams",
@@ -9,12 +18,12 @@
     "descendants": 24
   },
   {
-    "id": 987655,
+    "id": 987656,
     "type": "story",
-    "title": "Show HN: A.C.M.E. AI",
-    "url": "https://other.example/launch",
-    "time": 1787227200,
-    "score": 3,
-    "descendants": 1
+    "title": "Show HN: Name Only Labs – searchable research notes",
+    "url": "https://github.com/example/name-only-labs",
+    "time": 1787313600,
+    "score": 11,
+    "descendants": 4
   }
 ]
