@@ -1,29 +1,33 @@
 ---
 name: investment-research-sourcing
 description: Use when discovering, deduplicating, and triaging startup candidates for an initialized investment-research run.
-compatibility: Requires Python 3.10+ and network access for Exa or agent-native web search
+compatibility: Requires Python 3.10+; flow snapshots work offline; legacy Exa or web fallback requires network access
 ---
 
 # Source and triage candidates
 
-Read the run's `input.json` and `thesis.md`. Retrieve at most the requested count, never more than 20.
+Read the run's `input.json` and `thesis.md`. Retain at most the requested count, never more than 20.
 
-## Retrieval
+## Flow source path
 
-Prefer `scripts/search.py --input INPUT --thesis THESIS --output RETRIEVAL`. It writes a compact atomic Exa envelope and prints only status. If it fails, preserve that envelope, use native web search when available, and create the same envelope shape with `provider: web`, query, retrieval time, status, exit code, optional bounded error/stderr, and results.
+Run `scripts/search.py snapshots --input INPUT --thesis THESIS --product-hunt PRODUCT_HUNT_ATOM --yc YC_JSON --hacker-news HN_JSON --output CANDIDATES --retrieval-output RETRIEVAL`. Product Hunt and YC snapshots are required origin inputs. `--hacker-news` is optional enrichment and never creates an origin. This path reads local snapshots, requires no API key or network call, and atomically writes a current retrieval artifact plus normalized `candidates` and provenance-preserving `excluded` arrays.
 
-For every result, keep the canonical URL, title, publication date when available, and at most one 400-character highlight. Deduplicate canonical URLs.
+Product Hunt and YC origin URLs must use their official domains. Candidate freshness or traction signals must link to one of those retained origins or an official Hacker News item. Deduplicate by canonical company domain, falling back to normalized company name only when two usable domains are unavailable.
+
+## Legacy Exa compatibility
+
+The legacy `scripts/search.py --input INPUT --thesis THESIS --output RETRIEVAL` form remains available for older runs. It writes the historical Exa envelope and may use native web fallback after provider failure. Do not use this legacy Exa path as the preferred flow workflow.
 
 ## Triage contract
 
-Write only `sourcing/candidates.json`; do not create a prose sourcing artifact. Include provider/query metadata, requested and actual retained counts, `candidates`, and `excluded`.
+Write `sourcing/candidates.json` and `sourcing/retrieval.json`; do not create a prose sourcing artifact. Preserve `provider: source_snapshots`, query, retrieval path, requested and actual retained counts, `candidates`, and `excluded` from the snapshot command. Never retain more than the requested count or the hard maximum of 20.
 
 Each retained candidate must include:
 
-- `name`, stable `slug`, canonical `website`, and `candidate_type` as `priority` or `comparable`;
-- specific `fit_reasons`, numeric `research_priority`, `source_quality`, and `source_urls`;
-- `selected_for_research`, true for the highest-ranked priority candidates up to the research limit.
+- `name`, stable `slug`, canonical `website`, and `one_line_description`;
+- complete Product Hunt or YC `origins`, nullable `team_signal`, and source-linked `freshness_or_traction_signals`;
+- specific `thesis_fit_reasons` and deterministic `rank`.
 
-Each exclusion uses `candidate_type: excluded` and states the reason. Keep useful comparables, but do not deeply research them unless `input.json` explicitly sets `research.full_coverage` to true.
+Each exclusion states the reason and retains its origin provenance. The snapshot command deterministically creates candidate-specific `thesis_fit_reasons` from `input.json` and `thesis.md`.
 
-Commit both JSON artifacts atomically, then mark sourcing completed through the entry-point run helper.
+Use both atomically written artifacts as the flow output, then mark sourcing complete with provider `source_snapshots`. Legacy Exa and web runs retain their historical provider compatibility.

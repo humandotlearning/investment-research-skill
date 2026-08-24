@@ -1,10 +1,12 @@
-"""Retrieve a bounded Exa candidate set and write a compact JSON artifact."""
+"""Run offline flow sourcing or the legacy Exa retrieval helper."""
 
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
+import re
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -258,7 +260,7 @@ def _failure_envelope(query: str, error: RetrievalError, api_key: str | None) ->
     return payload
 
 
-def main(argv=None) -> int:
+def _legacy_main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--thesis", type=Path, required=True)
@@ -299,6 +301,287 @@ def main(argv=None) -> int:
     if code:
         print(payload.get("error", "retrieval failed"), file=sys.stderr)
     return code
+
+
+def _load_source_adapters():
+    path = Path(__file__).with_name("sources.py")
+    spec = importlib.util.spec_from_file_location("flow_source_adapters", path)
+    if spec is None or spec.loader is None:
+        raise RetrievalError("flow source adapters are unavailable", EXIT_RUNTIME)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _sentence_fragment(value: str) -> str:
+    return " ".join(str(value).split()).rstrip(".!?")
+
+
+def _thesis_fit_reasons(name: str, topic: str, thesis: str) -> list[str]:
+    return [
+        f"{name} matches the sourcing topic: {_sentence_fragment(topic)}.",
+        f"{name} is relevant to the investment thesis: {_sentence_fragment(thesis)}.",
+    ]
+
+
+def _research_limit(input_data: dict, requested_count: int) -> int:
+    research = input_data.get("research", {}) if isinstance(input_data, dict) else {}
+    if not isinstance(research, dict):
+        raise RetrievalError("research must be an object", EXIT_INPUT)
+    if research.get("full_coverage", True) is not True:
+        raise RetrievalError("research.full_coverage must be exactly true", EXIT_INPUT)
+    if "limit" in research:
+        raise RetrievalError("research.limit is not allowed", EXIT_INPUT)
+    return requested_count
+
+
+def _run_candidate(candidate: dict, research_limit: int) -> dict:
+    reasons = list(candidate["thesis_fit_reasons"])
+    source_urls = {
+        str(origin["canonical_url"])
+        for origin in candidate.get("origins", [])
+        if isinstance(origin, dict) and origin.get("canonical_url")
+    }
+    team_signal = candidate.get("team_signal")
+    if isinstance(team_signal, dict) and team_signal.get("source_url"):
+        source_urls.add(str(team_signal["source_url"]))
+    source_urls.update(
+        str(signal["source_url"])
+        for signal in candidate.get("freshness_or_traction_signals", [])
+        if isinstance(signal, dict) and signal.get("source_url")
+    )
+    return {
+        **candidate,
+        "description": candidate["one_line_description"],
+        "candidate_type": "priority",
+        "fit_reasons": reasons,
+        "research_priority": candidate["rank"],
+        "source_quality": "primary_record",
+        "source_urls": sorted(source_urls),
+        "selected_for_research": candidate["rank"] <= research_limit,
+    }
+
+
+def _run_exclusion(exclusion: dict) -> dict:
+    return {
+        **exclusion,
+        "name": str(exclusion.get("name") or "Unknown"),
+        "candidate_type": "excluded",
+    }
+
+
+def _provenance_result(
+    candidate: dict,
+    *,
+    source: str,
+    source_id: str,
+    url: str,
+    published_date: object,
+) -> dict:
+    description = str(candidate.get("one_line_description") or candidate.get("reason") or "")
+    return {
+        "title": str(candidate.get("name") or "Unknown"),
+        "candidate_name": str(candidate.get("name") or "Unknown"),
+        "candidate_slug": candidate.get("slug"),
+        "candidate_website": candidate.get("website"),
+        "source": source,
+        "source_id": str(source_id),
+        "url": url,
+        "published_date": published_date,
+        "highlights": [description[:MAX_HIGHLIGHT_CHARS]] if description else [],
+    }
+
+
+def _signal_provenance(signal: dict, candidate: dict) -> tuple[str, str, str, object]:
+    source_url = canonicalize_url(signal.get("source_url"))
+    if source_url is None:
+        raise RetrievalError("candidate signal requires a valid source URL", EXIT_INPUT)
+    for origin in candidate.get("origins", []):
+        if (
+            isinstance(origin, dict)
+            and canonicalize_url(origin.get("canonical_url")) == source_url
+        ):
+            return (
+                str(origin["source"]),
+                str(origin["source_id"]),
+                source_url,
+                origin.get("publication_or_batch_date"),
+            )
+    parsed = urlsplit(source_url)
+    if parsed.hostname == "news.ycombinator.com" and parsed.path == "/item":
+        match = re.fullmatch(r"id=(\d+)", parsed.query)
+        if match:
+            return "hacker_news", match.group(1), source_url, signal.get("date")
+    website = canonicalize_url(candidate.get("website"))
+    website_host = urlsplit(website).hostname if website else None
+    if parsed.hostname and website_host and (
+        parsed.hostname == website_host or parsed.hostname.endswith(f".{website_host}")
+    ):
+        return "official_company", source_url, source_url, signal.get("date")
+    raise RetrievalError(
+        f"candidate signal is not traceable to an allowed source: {source_url}", EXIT_INPUT
+    )
+
+
+def _retrieval_results(candidate: dict) -> list[dict]:
+    results: dict[tuple[str, str, str], dict] = {}
+    for origin in candidate.get("origins", []):
+        if not isinstance(origin, dict):
+            continue
+        result = _provenance_result(
+            candidate,
+            source=str(origin.get("source")),
+            source_id=str(origin.get("source_id")),
+            url=str(origin.get("canonical_url")),
+            published_date=origin.get("publication_or_batch_date"),
+        )
+        results[(result["source"], result["source_id"], result["url"])] = result
+    signals = []
+    if isinstance(candidate.get("team_signal"), dict):
+        signals.append(candidate["team_signal"])
+    signals.extend(
+        signal
+        for signal in candidate.get("freshness_or_traction_signals", [])
+        if isinstance(signal, dict)
+    )
+    for signal in signals:
+        source, source_id, source_url, published_date = _signal_provenance(
+            signal, candidate
+        )
+        key = (source, source_id, source_url)
+        results.setdefault(
+            key,
+            _provenance_result(
+                candidate,
+                source=source,
+                source_id=source_id,
+                url=source_url,
+                published_date=published_date,
+            ),
+        )
+    return [results[key] for key in sorted(results)]
+
+
+def _snapshot_main(argv) -> int:
+    parser = argparse.ArgumentParser(
+        description="Normalize Product Hunt and YC snapshots with optional HN enrichment."
+    )
+    parser.add_argument("--input", type=Path, required=True)
+    parser.add_argument("--thesis", type=Path, required=True)
+    parser.add_argument("--product-hunt", type=Path, required=True)
+    parser.add_argument("--yc", type=Path, required=True)
+    parser.add_argument("--hacker-news", type=Path)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--retrieval-output", type=Path, required=True)
+    args = parser.parse_args(argv)
+    try:
+        adapters = _load_source_adapters()
+        input_data = json.loads(args.input.read_text(encoding="utf-8"))
+        thesis = args.thesis.read_text(encoding="utf-8")
+        topic = _seed_text(input_data)
+        requested_count = _target_count(input_data)
+        research_limit = _research_limit(input_data, requested_count)
+        if not thesis.strip():
+            raise RetrievalError("thesis must be non-empty", EXIT_INPUT)
+        query = (
+            f"Official Product Hunt and YC snapshots for {_sentence_fragment(topic)}. "
+            f"Investment thesis: {_sentence_fragment(thesis)}."
+        )
+        product_hunt = adapters.parse_product_hunt_atom(
+            args.product_hunt.read_text(encoding="utf-8")
+        )
+        yc = adapters.normalize_yc_snapshot(
+            json.loads(args.yc.read_text(encoding="utf-8"))
+        )
+        records = product_hunt + yc
+        for record in records:
+            record["thesis_fit_reasons"] = _thesis_fit_reasons(
+                record["name"], topic, thesis
+            )
+        candidates, excluded = adapters.normalize_candidates(records)
+        for candidate in candidates:
+            candidate["thesis_fit_reasons"] = _thesis_fit_reasons(
+                candidate["name"], topic, thesis
+            )
+        if args.hacker_news is not None:
+            items = json.loads(args.hacker_news.read_text(encoding="utf-8"))
+            candidates = adapters.enrich_with_hacker_news(candidates, items)
+        overflow = candidates[requested_count:]
+        candidates = candidates[:requested_count]
+        excluded.extend(
+            {
+                **candidate,
+                "candidate_type": "excluded",
+                "reason": "outside requested count",
+            }
+            for candidate in overflow
+        )
+        run_candidates = [
+            _run_candidate(candidate, research_limit) for candidate in candidates
+        ]
+        run_excluded = [_run_exclusion(exclusion) for exclusion in excluded]
+        retrieval = {
+            "query": query,
+            "provider": "source_snapshots",
+            "retrieved_at": utc_now(),
+            "status": "ok",
+            "exit_code": 0,
+            "results": [
+                result
+                for candidate in [*run_candidates, *run_excluded]
+                for result in _retrieval_results(candidate)
+            ],
+        }
+        payload = {
+            "provider": "source_snapshots",
+            "query": query,
+            "retrieval_path": "sourcing/retrieval.json",
+            "requested_count": requested_count,
+            "actual_count": len(run_candidates),
+            "candidates": run_candidates,
+            "excluded": run_excluded,
+        }
+    except (OSError, json.JSONDecodeError, SyntaxError, RetrievalError) as error:
+        print(
+            json.dumps(
+                {"status": "failed", "exit_code": EXIT_INPUT, "error": str(error)},
+                separators=(",", ":"),
+            ),
+            file=sys.stderr,
+        )
+        return EXIT_INPUT
+    try:
+        atomic_write_json(args.retrieval_output, retrieval)
+        atomic_write_json(args.output, payload)
+    except (OSError, TypeError, ValueError) as error:
+        print(
+            json.dumps(
+                {"status": "failed", "exit_code": EXIT_WRITE, "error": str(error)},
+                separators=(",", ":"),
+            ),
+            file=sys.stderr,
+        )
+        return EXIT_WRITE
+    print(
+        json.dumps(
+            {
+                "status": "ok",
+                "provider": payload["provider"],
+                "output": str(args.output),
+                "exit_code": 0,
+                "result_count": payload["actual_count"],
+            },
+            separators=(",", ":"),
+        )
+    )
+    return 0
+
+
+def main(argv=None) -> int:
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments[:1] == ["snapshots"]:
+        return _snapshot_main(arguments[1:])
+    return _legacy_main(arguments)
 
 
 if __name__ == "__main__":

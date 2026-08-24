@@ -1,0 +1,51 @@
+{
+  "version": 2,
+  "total_weight": 100,
+  "categories": [
+    {
+      "name": "Team",
+      "weight": 20,
+      "anchors": {
+        "0": "No thesis-relevant visual intelligence team evidence.",
+        "10": "Company evidence suggests relevant visual workflow experience.",
+        "20": "Independent evidence shows exceptional visual intelligence execution."
+      }
+    },
+    {
+      "name": "Product differentiation",
+      "weight": 20,
+      "anchors": {
+        "0": "No differentiated visual intelligence or compounding workflow context.",
+        "10": "The product claims differentiated visual intelligence or persistent context.",
+        "20": "Independent evidence supports a durable visual workflow-context advantage."
+      }
+    },
+    {
+      "name": "Market",
+      "weight": 20,
+      "anchors": {
+        "0": "No evidence of a valuable market for the visual workflow thesis.",
+        "10": "Company evidence identifies a plausible visual workflow market.",
+        "20": "Independent evidence supports a large urgent visual workflow market."
+      }
+    },
+    {
+      "name": "Traction",
+      "weight": 20,
+      "anchors": {
+        "0": "No adoption evidence for the thesis-relevant visual workflow.",
+        "10": "Company claims indicate early visual workflow adoption.",
+        "20": "Independent evidence demonstrates strong visual workflow adoption."
+      }
+    },
+    {
+      "name": "Thesis alignment",
+      "weight": 20,
+      "anchors": {
+        "0": "The company does not compound visual workflow context.",
+        "10": "The company partially matches the visual workflow-context thesis.",
+        "20": "The company directly compounds proprietary visual workflow context."
+      }
+    }
+  ]
+}

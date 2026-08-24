@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Product Hunt</title>
+  <entry>
+    <id>tag:producthunt.com,2026-08-20:post/12345</id>
+    <title>Acme AI – Workflow automation for investment teams</title>
+    <updated>2026-08-20T12:00:00Z</updated>
+    <link rel="related" href="https://Acme.example/pricing?utm_source=producthunt" />
+    <link rel="alternate" href="https://www.producthunt.com/posts/acme-ai" />
+    <summary>Acme turns diligence notes into a reusable workflow.</summary>
+  </entry>
+</feed>

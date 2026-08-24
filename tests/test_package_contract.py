@@ -56,8 +56,53 @@ class PackageContractTests(unittest.TestCase):
         readme = (ROOT / "README.md").read_text(encoding="utf-8").lower()
         for phrase in ["claude code", "codex", "hermes", "openclaw", "exa", "web fallback"]:
             self.assertIn(phrase, readme)
+        self.assertIn("source_snapshots", readme)
+        self.assertIn("--rubric", readme)
+        self.assertIn("10 sourced candidates", readme)
+        self.assertIn("full_coverage: true", readme)
+        self.assertNotIn("exa is preferred", readme)
+        self.assertNotIn("15 sourced candidates", readme)
+        self.assertNotIn("8 priority candidates", readme)
+        self.assertNotIn("full_coverage: false", readme)
 
-    def test_package_has_only_three_helpers_and_they_compile(self):
+        start_skill = (
+            SKILLS / "investment-research-start" / "SKILL.md"
+        ).read_text(encoding="utf-8").lower()
+        self.assertIn("10 sourced candidates", start_skill)
+        self.assertIn("full_coverage: true", start_skill)
+        self.assertNotIn("15 sourced candidates", start_skill)
+        self.assertNotIn("8 deeply researched priority candidates", start_skill)
+        self.assertNotIn("full_coverage: false", start_skill)
+
+    def test_sourcing_skill_uses_snapshot_adapters_for_the_flow_path(self):
+        text = (SKILLS / "investment-research-sourcing" / "SKILL.md").read_text(
+            encoding="utf-8"
+        ).lower()
+
+        for phrase in [
+            "scripts/search.py snapshots",
+            "--input",
+            "--thesis",
+            "--product-hunt",
+            "--yc",
+            "--hacker-news",
+            "--retrieval-output",
+            "source_snapshots",
+            "legacy exa",
+        ]:
+            self.assertIn(phrase, text)
+        self.assertNotIn("prefer `scripts/search.py --input", text)
+
+    def test_entry_skill_uses_source_snapshot_codex_pipeline_preflight(self):
+        text = (SKILLS / "investment-research-start" / "SKILL.md").read_text(
+            encoding="utf-8"
+        ).lower()
+
+        for phrase in ["source snapshots", "codex pipeline", "source_snapshots"]:
+            self.assertIn(phrase, text)
+        self.assertNotIn("exa is preferred", text)
+
+    def test_package_has_only_expected_helpers_and_they_compile(self):
         scripts = sorted(
             path.relative_to(ROOT).as_posix()
             for path in SKILLS.rglob("*.py")
@@ -67,6 +112,8 @@ class PackageContractTests(unittest.TestCase):
             [
                 "skills/investment-research-evidence/scripts/research.py",
                 "skills/investment-research-sourcing/scripts/search.py",
+                "skills/investment-research-sourcing/scripts/sources.py",
+                "skills/investment-research-start/scripts/flow_v2.py",
                 "skills/investment-research-start/scripts/run.py",
             ],
         )

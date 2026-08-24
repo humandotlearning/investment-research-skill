@@ -1,7 +1,7 @@
 ---
 name: investment-research-start
 description: Use when starting or resuming a structured startup investment-research run from a topic, URL list, or feed.
-compatibility: Requires Python 3.10+ and network access for Exa or agent-native web search
+compatibility: Requires Python 3.10+ and Product Hunt/YC source access through the Codex pipeline or local snapshots; Exa is legacy-only
 ---
 
 # Investment research entry point
@@ -11,7 +11,7 @@ Create and manage one evidence-bound research run. Keep the run directory as the
 ## Workflow
 
 1. Locate a working Python 3.10+ interpreter. Never install Python or repair aliases automatically.
-2. Run `scripts/run.py preflight`. Exa is preferred when ready. If Exa is unavailable, use the current agent's native web-search capability and mark every fallback retrieval envelope with `provider: web`. If neither works, record a failed stage and surface the preflight remediation.
+2. Run `scripts/run.py preflight`. Flow runs use `recommended_provider: source_snapshots`. Use the Codex pipeline to gather source snapshots from Product Hunt and YC, with optional Hacker News enrichment, or provide equivalent local snapshots. Local Product Hunt/YC snapshots remain usable when network health is unavailable; Task 2 owns live multi-source fetch health. Treat Exa readiness as a legacy compatibility diagnostic, never the preferred flow path. If Python is unavailable, record a failed stage and surface the preflight remediation.
 3. Prepare `input.json` and `thesis.md`, then run `scripts/run.py init`. Use the returned run only when it is new or resumable.
 4. Activate `investment-research-sourcing`, then `investment-research-evidence`, `investment-research-analysis`, and `investment-research-memo` in that order.
 5. Update each stage with `scripts/run.py stage`. Mark a stage completed only after its artifacts exist and validate.
@@ -21,7 +21,7 @@ Use the same interpreter for every command. Pass files and ordinary arguments; n
 
 ## Input defaults
 
-`input.json` accepts `seed`, `assumptions`, `sourcing`, `research`, and `recommendation_thresholds`. Defaults materialized by `init` are 15 sourced candidates, 8 deeply researched priority candidates, `research.full_coverage: false`, `Watch` at 65, and `Take a meeting` at 80.
+`input.json` accepts `seed`, `assumptions`, `sourcing`, `research`, and `recommendation_thresholds`. Defaults materialized by `init` are 10 sourced candidates, `research.full_coverage: true`, no research limit, `Watch` at 65, and `Take a meeting` at 80. Initialization requires `thesis.md` and `rubric.json`.
 
 ## Run state
 

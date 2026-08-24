@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import importlib.util
 import json
 import os
@@ -29,14 +28,40 @@ STAGES = {"sourcing", "research", "analysis", "memo", "validation"}
 CATEGORIES = ("team", "product", "market", "traction", "competitors", "freshness")
 CLAIM_TYPES = {"verified_fact", "company_claim", "secondary_report", "inference", "unknown"}
 SOURCE_QUALITIES = {"first_party", "primary_record", "credible_secondary", "unknown"}
+PROVIDERS = {"exa", "web", "source_snapshots"}
 CONFIDENCES = {"high", "medium", "low"}
 SCORE_LABELS = (
     "Team",
     "Product differentiation",
-    "Market attractiveness",
+    "Market",
     "Traction",
     "Thesis alignment",
 )
+ORIGIN_HOSTS = {
+    "product_hunt": {"producthunt.com", "www.producthunt.com"},
+    "yc": {"ycombinator.com", "www.ycombinator.com"},
+}
+SOURCING_PROVENANCE_SOURCES = {"product_hunt", "yc", "hacker_news"}
+SCORE_COVERAGE = {
+    "Team": "team",
+    "Product differentiation": "product",
+    "Market": "market",
+    "Traction": "traction",
+}
+COMPANY_CLAIM_CAPPED_CATEGORIES = {"Team", "Market", "Traction"}
+
+
+def _load_flow_v2_module():
+    module_path = Path(__file__).with_name("flow_v2.py")
+    spec = importlib.util.spec_from_file_location("investment_flow_v2", module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"unable to load flow-v2 lifecycle module: {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+FLOW_V2 = _load_flow_v2_module()
 
 
 class ArtifactWriteError(OSError):
@@ -95,7 +120,7 @@ def _find_env_local(start: Path) -> Path | None:
 
 
 def probe_network() -> str:
-    request = urllib.request.Request("https://api.exa.ai", method="HEAD")
+    request = urllib.request.Request("https://www.producthunt.com/feed", method="HEAD")
     try:
         with urllib.request.urlopen(request, timeout=4):
             return "reachable"
@@ -116,11 +141,7 @@ def preflight(
     if sdk_available is None:
         sdk_available = importlib.util.find_spec("exa_py") is not None
     if network_status is None:
-        network_status = (
-            probe_network()
-            if runtime_usable and key and sdk_available
-            else "not_checked"
-        )
+        network_status = "not_checked"
 
     failures = []
     if not runtime_usable:
@@ -130,38 +151,23 @@ def preflight(
                 "remediation": "Use a working Python 3.10+ interpreter; do not rely on a broken alias.",
             }
         )
-    if not key:
-        failures.append(
-            {
-                "class": "missing_api_key",
-                "remediation": "Set EXA_API_KEY or use the native web fallback.",
-            }
-        )
-    if not sdk_available:
-        failures.append(
-            {
-                "class": "missing_sdk",
-                "remediation": "Use an existing exa-py installation or the native web fallback.",
-            }
-        )
     if network_status == "unreachable":
         failures.append(
             {
                 "class": "network_unavailable",
-                "remediation": "Use the native web fallback or retry where provider access is allowed.",
+                "remediation": "Retry the Codex source pipeline where Product Hunt and YC snapshot access is allowed, or provide local snapshots.",
             }
         )
 
     exa_ready = bool(
         runtime_usable and key and sdk_available and network_status != "unreachable"
     )
+    snapshot_pipeline_ready = runtime_usable
     failure_class = failures[0]["class"] if failures else None
     if network_status == "unreachable":
         failure_class = "network_unavailable"
-    elif key and not sdk_available:
-        failure_class = "missing_sdk"
     return {
-        "status": "ready" if exa_ready else ("degraded" if runtime_usable else "blocked"),
+        "status": "ready" if snapshot_pipeline_ready else "blocked",
         "runtime": {
             "usable": runtime_usable,
             "executable": sys.executable,
@@ -172,30 +178,554 @@ def preflight(
         "exa_sdk_available": bool(sdk_available),
         "network_status": network_status,
         "exa_ready": exa_ready,
-        "recommended_provider": "exa" if exa_ready else ("web" if runtime_usable else "none"),
+        "snapshot_pipeline_ready": snapshot_pipeline_ready,
+        "recommended_provider": (
+            "source_snapshots" if snapshot_pipeline_ready else "none"
+        ),
         "failure_class": failure_class,
         "failures": failures,
     }
 
 
 def canonicalize_url(url: str | None) -> str | None:
-    if not url:
+    if not isinstance(url, str) or not url.strip() or re.search(r"\s", url):
         return None
-    text = str(url).strip()
+    text = url.strip()
     parsed = urlsplit(text)
-    if not parsed.scheme or not parsed.hostname:
-        return text or None
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+        return None
+    if parsed.username is not None or parsed.password is not None:
+        return None
     scheme = parsed.scheme.lower()
     host = parsed.hostname.lower()
     try:
         port = parsed.port
     except ValueError:
-        port = None
-    netloc = host
+        return None
+    netloc = f"[{host}]" if ":" in host else host
     if port and not ((scheme == "https" and port == 443) or (scheme == "http" and port == 80)):
         netloc = f"{host}:{port}"
     path = parsed.path.rstrip("/")
     return urlunsplit((scheme, netloc, path, parsed.query, ""))
+
+
+def _provenance_url(value: object) -> str | None:
+    canonical = canonicalize_url(value if isinstance(value, str) else None)
+    if canonical is None:
+        return None
+    parsed = urlsplit(canonical)
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path.rstrip("/"), "", ""))
+
+
+def _url_host(value: object) -> str | None:
+    canonical = canonicalize_url(value)
+    if not canonical:
+        return None
+    parsed = urlsplit(canonical)
+    return parsed.hostname.lower() if parsed.hostname else None
+
+
+def _canonical_domain(value: object) -> str | None:
+    host = _url_host(value)
+    return host.removeprefix("www.") if host else None
+
+
+def _host_matches_candidate(value: object, website: object) -> bool:
+    source_host = _url_host(value)
+    website_host = _url_host(website)
+    if source_host is None or website_host is None:
+        return False
+    source_host = source_host.removeprefix("www.")
+    website_host = website_host.removeprefix("www.")
+    return source_host == website_host or source_host.endswith(f".{website_host}")
+
+
+def _normalized_company_name(value: object) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").casefold())
+
+
+def _is_official_hn_item(value: object) -> bool:
+    canonical = canonicalize_url(value)
+    if not canonical:
+        return False
+    parsed = urlsplit(canonical)
+    query = parsed.query.split("&") if parsed.query else []
+    return (
+        parsed.scheme == "https"
+        and parsed.hostname == "news.ycombinator.com"
+        and parsed.path == "/item"
+        and len(query) == 1
+        and re.fullmatch(r"id=\d+", query[0]) is not None
+    )
+
+
+def _origin_error(origin: object) -> str | None:
+    if not isinstance(origin, dict):
+        return "must be an object"
+    source = origin.get("source")
+    if source not in ORIGIN_HOSTS:
+        return "must identify Product Hunt or YC"
+    canonical = canonicalize_url(origin.get("canonical_url"))
+    parsed = urlsplit(canonical or "")
+    if parsed.scheme != "https" or parsed.hostname not in ORIGIN_HOSTS[source]:
+        return f"{source} URL must use its enforced source domain"
+    record_path = {
+        "product_hunt": r"/posts/[A-Za-z0-9][A-Za-z0-9._~-]*",
+        "yc": r"/companies/[A-Za-z0-9][A-Za-z0-9._~-]*",
+    }[source]
+    if re.fullmatch(record_path, parsed.path.rstrip("/")) is None:
+        return f"must use a record-specific {record_path} URL"
+    source_id = origin.get("source_id")
+    if not isinstance(source_id, str) or not source_id.strip():
+        return "requires a nonempty string source_id"
+    publication = origin.get("publication_or_batch_date")
+    if not isinstance(publication, str) or not publication.strip():
+        return "requires a nonempty string publication_or_batch_date"
+    return None
+
+
+def _allowed_signal_source(value: object, origins: list[dict], website: object) -> bool:
+    canonical = canonicalize_url(value)
+    if not canonical:
+        return False
+    if _is_official_hn_item(canonical):
+        return True
+    return _provenance_url(canonical) in {
+        _provenance_url(origin.get("canonical_url"))
+        for origin in origins
+        if isinstance(origin, dict) and _origin_error(origin) is None
+    }
+
+
+def _candidate_identity_matches(result: dict, candidate: dict) -> bool:
+    if result.get("candidate_name") != candidate.get("name"):
+        return False
+    expected_slug = candidate.get("slug")
+    if expected_slug is not None and result.get("candidate_slug") != expected_slug:
+        return False
+    expected_website = canonicalize_url(candidate.get("website"))
+    if expected_website is not None:
+        return canonicalize_url(result.get("candidate_website")) == expected_website
+    return result.get("candidate_website") in {None, ""}
+
+
+def _source_url_matches(actual: object, expected: object, source: str) -> bool:
+    if source in ORIGIN_HOSTS:
+        return _provenance_url(actual) == _provenance_url(expected)
+    return canonicalize_url(actual if isinstance(actual, str) else None) == canonicalize_url(
+        expected if isinstance(expected, str) else None
+    )
+
+
+def _signal_provenance_identity(
+    signal: dict, origins: list[dict], website: object
+) -> tuple[str, str] | None:
+    source_url = canonicalize_url(signal.get("source_url"))
+    if source_url is None:
+        return None
+    for origin in origins:
+        if (
+            isinstance(origin, dict)
+            and _origin_error(origin) is None
+            and _provenance_url(source_url) == _provenance_url(origin.get("canonical_url"))
+        ):
+            return str(origin["source"]), str(origin["source_id"])
+    if _is_official_hn_item(source_url):
+        match = re.fullmatch(r"id=(\d+)", urlsplit(source_url).query)
+        return ("hacker_news", match.group(1)) if match else None
+    return None
+
+
+def _validate_signal_provenance(
+    signal: dict,
+    origins: list[dict],
+    website: object,
+    candidate: dict,
+    retrieval_results: object,
+    errors: list[str],
+    label: str,
+) -> None:
+    identity = _signal_provenance_identity(signal, origins, website)
+    if identity is None:
+        return
+    source, source_id = identity
+    results = retrieval_results if isinstance(retrieval_results, list) else []
+    url_matches = [
+        result
+        for result in results
+        if isinstance(result, dict)
+        and _source_url_matches(result.get("url"), signal.get("source_url"), source)
+    ]
+    if not url_matches:
+        errors.append(f"{label} is absent from sourcing provenance")
+        return
+    identity_matches = [
+        result for result in url_matches if _candidate_identity_matches(result, candidate)
+    ]
+    if not identity_matches:
+        errors.append(f"{label} candidate identity does not match sourcing provenance")
+        return
+    source_matches = [
+        result for result in identity_matches if result.get("source") == source
+    ]
+    if not source_matches:
+        errors.append(f"{label} source does not match sourcing provenance")
+        return
+    if not any(result.get("source_id") == source_id for result in source_matches):
+        errors.append(f"{label} source_id does not match sourcing provenance")
+
+
+def _allowed_claim_source(value: object, candidate: dict) -> bool:
+    canonical = canonicalize_url(value)
+    if not canonical:
+        return False
+    host = _url_host(canonical)
+    if host in ORIGIN_HOSTS["product_hunt"] | ORIGIN_HOSTS["yc"]:
+        return _provenance_url(canonical) in {
+            _provenance_url(origin.get("canonical_url"))
+            for origin in candidate.get("origins", [])
+            if isinstance(origin, dict) and _origin_error(origin) is None
+        }
+    if _is_official_hn_item(canonical):
+        return True
+    return _host_matches_candidate(canonical, candidate.get("website"))
+
+
+def _is_company_originated(value: object, website: object) -> bool:
+    return canonicalize_url(value) is not None and _host_matches_candidate(value, website)
+
+
+def _validate_origin_list(
+    origins: object,
+    errors: list[str],
+    label: str,
+    retrieval_results: object = None,
+    owner: dict | None = None,
+) -> list[dict]:
+    if not isinstance(origins, list) or not origins:
+        errors.append(f"{label} requires at least one Product Hunt or YC origin")
+        return []
+    valid: list[dict] = []
+    seen = set()
+    for index, origin in enumerate(origins):
+        problem = _origin_error(origin)
+        if problem:
+            errors.append(f"{label} origin {index} {problem}")
+            continue
+        key = (
+            origin["source"],
+            canonicalize_url(origin["canonical_url"]),
+            str(origin["source_id"]),
+        )
+        if key in seen:
+            errors.append(f"{label} has duplicate origin provenance at index {index}")
+            continue
+        seen.add(key)
+        valid.append(origin)
+        if retrieval_results is not None:
+            results = retrieval_results if isinstance(retrieval_results, list) else []
+            matches = [
+                result for result in results
+                if isinstance(result, dict)
+                and _provenance_url(result.get("url")) == _provenance_url(origin["canonical_url"])
+            ]
+            if not matches:
+                errors.append(
+                    f"{label} origin {index} is absent from sourcing provenance"
+                )
+                continue
+            identity_matches = [
+                result
+                for result in matches
+                if owner is not None and _candidate_identity_matches(result, owner)
+            ]
+            if not identity_matches:
+                errors.append(
+                    f"{label} origin {index} candidate identity does not match sourcing provenance"
+                )
+                continue
+            source_matches = [
+                result for result in identity_matches if result.get("source") == origin["source"]
+            ]
+            if not source_matches:
+                errors.append(
+                    f"{label} origin {index} provider/source does not match sourcing provenance"
+                )
+                continue
+            id_matches = [
+                result
+                for result in source_matches
+                if result.get("source_id") == origin["source_id"]
+            ]
+            if not id_matches:
+                errors.append(
+                    f"{label} origin {index} source_id does not match sourcing provenance"
+                )
+                continue
+            if not any(
+                result.get("published_date") == origin["publication_or_batch_date"]
+                for result in id_matches
+            ):
+                errors.append(
+                    f"{label} origin {index} date does not match sourcing provenance"
+                )
+    return valid
+
+
+def _validate_flow_candidate(
+    candidate: object,
+    index: int,
+    errors: list[str],
+    retrieval_results: object = None,
+) -> dict | None:
+    if not isinstance(candidate, dict):
+        errors.append(f"candidate[{index}] must be an object")
+        return None
+    name = str(candidate.get("name", "")).strip() or f"candidate[{index}]"
+    label = f"candidate {name}"
+    for field in ("name", "slug", "website", "one_line_description"):
+        if not str(candidate.get(field, "")).strip():
+            errors.append(f"{label} requires {field}")
+    slug = candidate.get("slug")
+    if not isinstance(slug, str) or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", slug):
+        errors.append(f"{label} has invalid slug: {slug}")
+    website = canonicalize_url(candidate.get("website"))
+    if not website:
+        errors.append(f"{label} requires an absolute HTTP(S) website URL with a hostname")
+    origins = _validate_origin_list(
+        candidate.get("origins"), errors, label, retrieval_results, candidate
+    )
+    if "team_signal" not in candidate:
+        errors.append(f"{label} requires nullable team_signal")
+    team_signal = candidate.get("team_signal")
+    populated_signals: list[dict] = []
+    if team_signal is not None:
+        if not isinstance(team_signal, dict) or not _allowed_signal_source(
+            team_signal.get("source_url") if isinstance(team_signal, dict) else None,
+            origins,
+            website,
+        ):
+            errors.append(f"{label} team_signal requires an allowed source URL")
+        else:
+            populated_signals.append(team_signal)
+            _validate_signal_provenance(
+                team_signal,
+                origins,
+                website,
+                candidate,
+                retrieval_results,
+                errors,
+                f"{label} team_signal",
+            )
+    signals = candidate.get("freshness_or_traction_signals")
+    if not isinstance(signals, list) or not signals:
+        errors.append(f"{label} requires at least one freshness_or_traction_signal")
+    else:
+        for signal_index, signal in enumerate(signals):
+            if (
+                not isinstance(signal, dict)
+                or signal.get("kind") not in {"freshness", "traction"}
+                or not _allowed_signal_source(
+                    signal.get("source_url") if isinstance(signal, dict) else None,
+                    origins,
+                    website,
+                )
+            ):
+                errors.append(
+                    f"{label} signal {signal_index} requires freshness/traction and an allowed source URL"
+                )
+            else:
+                populated_signals.append(signal)
+                _validate_signal_provenance(
+                    signal,
+                    origins,
+                    website,
+                    candidate,
+                    retrieval_results,
+                    errors,
+                    f"{label} signal {signal_index}",
+                )
+    source_urls = candidate.get("source_urls")
+    if not isinstance(source_urls, list) or not source_urls:
+        errors.append(f"{label} requires source_urls for every origin and populated signal")
+    else:
+        actual_source_urls = {
+            canonicalize_url(value) for value in source_urls if canonicalize_url(value)
+        }
+        if len(actual_source_urls) != len(source_urls):
+            errors.append(f"{label} source_urls must contain unique valid absolute URLs")
+        expected_source_urls = {
+            canonicalize_url(origin.get("canonical_url")) for origin in origins
+        } | {
+            canonicalize_url(signal.get("source_url")) for signal in populated_signals
+        }
+        expected_source_urls.discard(None)
+        missing_source_urls = sorted(expected_source_urls - actual_source_urls)
+        unexpected_source_urls = sorted(actual_source_urls - expected_source_urls)
+        if missing_source_urls:
+            errors.append(
+                f"{label} source_urls missing origin/signal URLs: {', '.join(missing_source_urls)}"
+            )
+        if unexpected_source_urls:
+            errors.append(
+                f"{label} source_urls contain URLs without origin/signal provenance: "
+                + ", ".join(unexpected_source_urls)
+            )
+    reasons = candidate.get("thesis_fit_reasons")
+    if not isinstance(reasons, list) or not reasons or not all(
+        isinstance(reason, str) and reason.strip() for reason in reasons
+    ):
+        errors.append(f"{label} requires nonempty thesis_fit_reasons")
+    rank = candidate.get("rank")
+    if isinstance(rank, bool) or not isinstance(rank, int) or rank != index + 1:
+        errors.append(f"{label} rank must be deterministic and equal {index + 1}")
+    return candidate
+
+
+def _validate_flow_sourcing(
+    sourcing: object,
+    errors: list[str],
+    retrieval: object = None,
+) -> tuple[list[dict], list[dict]]:
+    if not isinstance(sourcing, dict):
+        errors.append("candidates.json must be an object")
+        return [], []
+    candidates_value = sourcing.get("candidates")
+    excluded_value = sourcing.get("excluded")
+    if not isinstance(candidates_value, list) or not isinstance(excluded_value, list):
+        errors.append("candidates and excluded must be arrays")
+        return [], []
+    candidates: list[dict] = []
+    seen_names: dict[str, str] = {}
+    seen_domains: dict[str, str] = {}
+    retrieval_results = retrieval.get("results") if isinstance(retrieval, dict) else None
+    if not isinstance(retrieval_results, list):
+        errors.append("sourcing retrieval results must be an array with provenance identity")
+    else:
+        for result_index, result in enumerate(retrieval_results):
+            result_label = f"sourcing retrieval result {result_index}"
+            if not isinstance(result, dict):
+                continue
+            if not isinstance(result.get("candidate_name"), str) or not result["candidate_name"].strip():
+                errors.append(f"{result_label} requires candidate identity name")
+            for field in ("candidate_slug", "candidate_website", "published_date"):
+                if field not in result:
+                    errors.append(f"{result_label} requires candidate identity/provenance field {field}")
+            if result.get("source") not in SOURCING_PROVENANCE_SOURCES:
+                errors.append(f"{result_label} requires an exact source")
+            if not isinstance(result.get("source_id"), str) or not result["source_id"].strip():
+                errors.append(f"{result_label} requires an exact nonempty source_id")
+            if canonicalize_url(result.get("url")) is None:
+                errors.append(f"{result_label} requires a valid absolute URL")
+    for index, value in enumerate(candidates_value):
+        candidate = _validate_flow_candidate(
+            value, index, errors, retrieval_results
+        )
+        if candidate is None:
+            continue
+        candidates.append(candidate)
+        name = str(candidate.get("name", "")).strip()
+        normalized_name = _normalized_company_name(name)
+        domain = _canonical_domain(candidate.get("website"))
+        if normalized_name in seen_names:
+            errors.append(f"duplicate candidate name: {name} matches {seen_names[normalized_name]}")
+        else:
+            seen_names[normalized_name] = name
+        if domain in seen_domains:
+            errors.append(f"duplicate candidate domain: {name} matches {seen_domains[domain]} ({domain})")
+        elif domain:
+            seen_domains[domain] = name
+    excluded: list[dict] = []
+    for index, value in enumerate(excluded_value):
+        label = f"exclusion[{index}]"
+        if not isinstance(value, dict):
+            errors.append(f"{label} must be an object")
+            continue
+        name = str(value.get("name", "")).strip()
+        if not name or value.get("candidate_type") != "excluded" or not str(value.get("reason", "")).strip():
+            errors.append(f"{label} requires name, candidate_type excluded, and reason")
+        _validate_origin_list(
+            value.get("origins"),
+            errors,
+            f"exclusion {name or index}",
+            retrieval_results,
+            value,
+        )
+        excluded.append(value)
+    return candidates, excluded
+
+
+def _candidate_by_slug(run_dir: Path, slug: str, errors: list[str]) -> dict | None:
+    sourcing = _add_json_error(
+        run_dir / "sourcing" / "candidates.json", errors, "candidates"
+    )
+    if not isinstance(sourcing, dict) or not isinstance(sourcing.get("candidates"), list):
+        errors.append(f"unable to resolve retained candidate for company {slug}")
+        return None
+    matches = [
+        candidate
+        for candidate in sourcing["candidates"]
+        if isinstance(candidate, dict) and candidate.get("slug") == slug
+    ]
+    if len(matches) != 1:
+        errors.append(f"company {slug} must match exactly one retained candidate")
+        return None
+    return matches[0]
+
+
+def _validate_evidence_identity_and_sources(
+    evidence: object,
+    candidate: dict,
+    errors: list[str],
+) -> dict[str, dict]:
+    name = str(candidate.get("name") or candidate.get("slug") or "unknown")
+    if not isinstance(evidence, dict):
+        errors.append(f"evidence for {name} must be an object")
+        return {}
+    company = evidence.get("company")
+    expected_identity = (
+        str(candidate.get("name", "")).strip(),
+        str(candidate.get("slug", "")).strip(),
+        canonicalize_url(candidate.get("website")),
+    )
+    actual_identity = (
+        str(company.get("name", "")).strip() if isinstance(company, dict) else "",
+        str(company.get("slug", "")).strip() if isinstance(company, dict) else "",
+        canonicalize_url(company.get("website")) if isinstance(company, dict) else None,
+    )
+    if actual_identity != expected_identity:
+        errors.append(f"evidence company identity mismatch for {name}")
+    claims = evidence.get("claims")
+    if not isinstance(claims, list):
+        return {}
+    claim_ids: dict[str, dict] = {}
+    for index, claim in enumerate(claims):
+        if not isinstance(claim, dict):
+            continue
+        claim_id = claim.get("id")
+        if isinstance(claim_id, str) and claim_id.strip() and claim_id not in claim_ids:
+            claim_ids[claim_id] = claim
+        source_url = claim.get("source_url")
+        if claim.get("claim_type") != "unknown" and not _allowed_claim_source(
+            source_url, candidate
+        ):
+            if _url_host(source_url) in ORIGIN_HOSTS["product_hunt"] | ORIGIN_HOSTS["yc"]:
+                errors.append(
+                    f"claim source does not match a recorded origin for {name} at claim "
+                    f"{claim_id or index}: {source_url}"
+                )
+            else:
+                errors.append(
+                    f"unsupported claim source for {name} at claim {claim_id or index}: {source_url}"
+                )
+        if (
+            claim.get("claim_type") == "company_claim"
+            and not _is_company_originated(source_url, candidate.get("website"))
+        ):
+            errors.append(
+                f"company claim must use the official company website for {name}: {claim_id or index}"
+            )
+    return claim_ids
 
 
 def _validate_json_text(text: str):
@@ -266,56 +796,11 @@ def read_json(path: str | Path):
 
 
 def normalize_input(value: dict) -> dict:
-    if not isinstance(value, dict):
-        raise ValueError("input must be a JSON object")
-    seed = value.get("seed")
-    if not isinstance(seed, dict) or seed.get("type") not in {"topic", "urls", "feed"}:
-        raise ValueError("seed.type must be topic, urls, or feed")
-    seed_value = seed.get("value")
-    if seed["type"] == "urls":
-        if not isinstance(seed_value, list) or not seed_value or not all(
-            isinstance(item, str) and item.strip() for item in seed_value
-        ):
-            raise ValueError("seed.value must be a non-empty URL list")
-    elif not isinstance(seed_value, str) or not seed_value.strip():
-        raise ValueError("seed.value must be non-empty")
-
-    sourcing = value.get("sourcing", {})
-    research = value.get("research", {})
-    thresholds = value.get("recommendation_thresholds", {})
-    target_count = sourcing.get("target_count", 15)
-    research_limit = research.get("limit", 8)
-    full_coverage = research.get("full_coverage", False)
-    watch_min = thresholds.get("watch_min", 65)
-    meeting_min = thresholds.get("meeting_min", 80)
-    if isinstance(target_count, bool) or not isinstance(target_count, int) or not 10 <= target_count <= 20:
-        raise ValueError("sourcing.target_count must be an integer from 10 through 20")
-    if isinstance(research_limit, bool) or not isinstance(research_limit, int) or not 1 <= research_limit <= target_count:
-        raise ValueError("research.limit must be from 1 through sourcing.target_count")
-    if not isinstance(full_coverage, bool):
-        raise ValueError("research.full_coverage must be boolean")
-    if not all(isinstance(item, int) and not isinstance(item, bool) for item in (watch_min, meeting_min)):
-        raise ValueError("recommendation thresholds must be integers")
-    if not 0 <= watch_min < meeting_min <= 100:
-        raise ValueError("thresholds must satisfy 0 <= watch_min < meeting_min <= 100")
-    assumptions = value.get("assumptions", [])
-    if not isinstance(assumptions, list) or not all(isinstance(item, str) for item in assumptions):
-        raise ValueError("assumptions must be an array of strings")
-    return {
-        "seed": seed,
-        "sourcing": {"target_count": target_count},
-        "research": {"limit": research_limit, "full_coverage": full_coverage},
-        "recommendation_thresholds": {
-            "watch_min": watch_min,
-            "meeting_min": meeting_min,
-        },
-        "assumptions": assumptions,
-    }
+    return FLOW_V2.normalize_input(value)
 
 
 def _fingerprint(input_data: dict, thesis: str) -> str:
-    serialized = json.dumps(input_data, sort_keys=True, ensure_ascii=False)
-    return hashlib.sha256(f"{serialized}\n{thesis}".encode("utf-8")).hexdigest()
+    return FLOW_V2.input_fingerprint(input_data, thesis)
 
 
 def _stage_record() -> dict:
@@ -330,51 +815,269 @@ def _stage_record() -> dict:
     }
 
 
-def initialize_run(
-    run_dir: str | Path, input_path: str | Path, thesis_path: str | Path
-) -> dict:
-    run_dir = Path(run_dir)
+def _load_flow_sources(
+    input_path: str | Path,
+    thesis_path: str | Path,
+    rubric_path: str | Path | None,
+) -> tuple[dict, str, dict]:
+    if rubric_path is None:
+        raise ValueError("rubric.json is required to initialize an flow-v2 run")
     input_data = normalize_input(read_json(input_path))
     thesis = Path(thesis_path).read_text(encoding="utf-8")
-    _validate_text(thesis)
+    if not thesis.strip():
+        raise ValueError("thesis.md must not be empty")
+    rubric = read_json(rubric_path)
+    FLOW_V2.validate_rubric(rubric, thesis)
+    return input_data, thesis, rubric
+
+
+def _stored_v2_flow(
+    run_dir: Path,
+    manifest: dict,
+    *,
+    require_active: bool = False,
+    validate_links: bool = True,
+) -> tuple[dict, str, dict, str]:
+    errors = FLOW_V2.validate_stored_flow(
+        run_dir, manifest, validate_links=validate_links
+    )
+    if errors:
+        raise ValueError("; ".join(errors))
+    if require_active and manifest.get("superseded_by"):
+        raise ValueError("existing run has been superseded and cannot continue")
+    try:
+        input_data = normalize_input(read_json(run_dir / "input.json"))
+        thesis = (run_dir / "thesis.md").read_text(encoding="utf-8")
+        if not thesis.strip():
+            raise ValueError("thesis.md must not be empty")
+        rubric = read_json(run_dir / "rubric.json")
+        FLOW_V2.validate_rubric(rubric, thesis)
+    except (OSError, json.JSONDecodeError, ValueError) as error:
+        raise ValueError(f"stored run flow is invalid: {error}") from error
+    fingerprint = FLOW_V2.flow_fingerprint(input_data, thesis, rubric)
+    return input_data, thesis, rubric, fingerprint
+
+
+def _initialization_marker(
+    run_dir: Path,
+    fingerprint: str,
+    rubric_fingerprint: str,
+    flow_fingerprint: str,
+    supersedes_run_id: str | None,
+    supersedes_run_path: str | None,
+) -> dict:
+    return {
+        "version": 2,
+        "run_id": run_dir.name,
+        "input_fingerprint": fingerprint,
+        "rubric_fingerprint": rubric_fingerprint,
+        "flow_fingerprint": flow_fingerprint,
+        "supersedes_run_id": supersedes_run_id,
+        "supersedes_run_path": supersedes_run_path,
+    }
+
+
+def _validate_initialization_destination(run_dir: Path, expected_marker: dict) -> Path:
+    marker_path = run_dir / FLOW_V2.INITIALIZATION_MARKER
+    if not run_dir.exists() or not any(run_dir.iterdir()):
+        run_dir.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(marker_path, expected_marker)
+        return marker_path
+    if not marker_path.is_file():
+        raise ValueError("run directory is not empty and has no initialization marker")
+    try:
+        marker = read_json(marker_path)
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"initialization marker is invalid: {error}") from error
+    if marker != expected_marker:
+        raise ValueError("initialization marker does not match the requested flow")
+    allowed = {
+        FLOW_V2.INITIALIZATION_MARKER,
+        "input.json",
+        "thesis.md",
+        "rubric.json",
+        "sourcing",
+        "companies",
+    }
+    unexpected = sorted(path.name for path in run_dir.iterdir() if path.name not in allowed)
+    if unexpected:
+        raise ValueError(
+            "initialization directory contains unrelated files: " + ", ".join(unexpected)
+        )
+    for directory_name in ("sourcing", "companies"):
+        directory = run_dir / directory_name
+        if directory.exists() and (not directory.is_dir() or any(directory.iterdir())):
+            raise ValueError(
+                f"initialization directory contains unrelated {directory_name} artifacts"
+            )
+    return marker_path
+
+
+def initialize_run(
+    run_dir: str | Path,
+    input_path: str | Path,
+    thesis_path: str | Path,
+    rubric_path: str | Path | None = None,
+    *,
+    _supersedes_run_id: str | None = None,
+    _supersedes_run_path: str | None = None,
+) -> dict:
+    if (_supersedes_run_id is None) != (_supersedes_run_path is None):
+        raise ValueError("superseding initialization requires both run id and path")
+    run_dir = Path(run_dir)
+    input_data, thesis, rubric = _load_flow_sources(
+        input_path, thesis_path, rubric_path
+    )
     fingerprint = _fingerprint(input_data, thesis)
+    rubric_fingerprint = FLOW_V2.rubric_fingerprint(rubric)
+    flow_fingerprint = FLOW_V2.flow_fingerprint(
+        input_data, thesis, rubric
+    )
     manifest_path = run_dir / "manifest.json"
+    expected_marker = _initialization_marker(
+        run_dir,
+        fingerprint,
+        rubric_fingerprint,
+        flow_fingerprint,
+        _supersedes_run_id,
+        _supersedes_run_path,
+    )
+    marker_path = run_dir / FLOW_V2.INITIALIZATION_MARKER
     if manifest_path.exists():
+        if marker_path.exists():
+            try:
+                marker = read_json(marker_path)
+            except (OSError, json.JSONDecodeError) as error:
+                raise ValueError(f"initialization marker is invalid: {error}") from error
+            if marker != expected_marker:
+                raise ValueError("initialization marker does not match the durable manifest")
         manifest = read_json(manifest_path)
-        try:
-            stored_input = normalize_input(read_json(run_dir / "input.json"))
-            stored_thesis = (run_dir / "thesis.md").read_text(encoding="utf-8")
-            stored_fingerprint = _fingerprint(stored_input, stored_thesis)
-        except (OSError, json.JSONDecodeError, ValueError) as error:
-            raise ValueError(f"stored run inputs are invalid: {error}") from error
-        if manifest.get("input_fingerprint") != stored_fingerprint:
+        stored_input, stored_thesis, _, stored_flow_fingerprint = (
+            _stored_v2_flow(run_dir, manifest, require_active=True)
+        )
+        if manifest.get("input_fingerprint") != _fingerprint(stored_input, stored_thesis):
             raise ValueError("stored run fingerprint does not match input.json and thesis.md")
-        if manifest.get("input_fingerprint") != fingerprint:
-            raise ValueError("existing run input or thesis does not match")
+        if stored_flow_fingerprint != flow_fingerprint:
+            raise ValueError(
+                "existing run flow does not match; create a linked run with supersede"
+            )
         if manifest.get("validation", {}).get("status") == "completed":
             raise ValueError("existing run is already completed")
+        if marker_path.exists():
+            marker_path.unlink()
         return {"resumed": True, "manifest": manifest}
-    if run_dir.exists() and any(run_dir.iterdir()):
-        raise ValueError("run directory is not empty and has no resumable manifest")
 
-    run_dir.mkdir(parents=True, exist_ok=True)
+    marker_path = _validate_initialization_destination(run_dir, expected_marker)
     (run_dir / "sourcing").mkdir(exist_ok=True)
     (run_dir / "companies").mkdir(exist_ok=True)
     now = utc_now()
     manifest = {
-        "version": 1,
+        "version": 2,
         "run_id": run_dir.name,
         "created_at": now,
         "updated_at": now,
         "input_fingerprint": fingerprint,
+        "rubric_fingerprint": rubric_fingerprint,
+        "flow_fingerprint": flow_fingerprint,
+        "supersedes_run_id": _supersedes_run_id,
+        "supersedes_run_path": _supersedes_run_path,
+        "superseded_by": None,
         "stages": {"sourcing": _stage_record()},
         "companies": {},
         "validation": _stage_record(),
     }
     atomic_write_json(run_dir / "input.json", input_data)
     atomic_write_text(run_dir / "thesis.md", thesis)
+    atomic_write_json(run_dir / "rubric.json", rubric)
     atomic_write_json(manifest_path, manifest)
+    marker_path.unlink()
     return {"resumed": False, "manifest": manifest}
+
+
+def supersede_run(
+    supersedes_run_dir: str | Path,
+    run_dir: str | Path,
+    input_path: str | Path,
+    thesis_path: str | Path,
+    rubric_path: str | Path,
+) -> dict:
+    """Create a distinct flow-v2 run and link both manifests safely."""
+    old_dir = Path(supersedes_run_dir).resolve()
+    new_dir = Path(run_dir).resolve()
+    if old_dir == new_dir or old_dir in new_dir.parents:
+        raise ValueError("superseding run must use a separate directory outside the old run")
+    old_manifest_path = old_dir / "manifest.json"
+    old_manifest = read_json(old_manifest_path)
+    _, _, _, old_fingerprint = _stored_v2_flow(old_dir, old_manifest)
+    input_data, thesis, rubric = _load_flow_sources(
+        input_path, thesis_path, rubric_path
+    )
+    new_fingerprint = FLOW_V2.flow_fingerprint(input_data, thesis, rubric)
+    if new_fingerprint == old_fingerprint:
+        raise ValueError("superseding run must change input, thesis, or rubric")
+    expected_backlink = {
+        "run_id": new_dir.name,
+        "path": str(new_dir),
+        "flow_fingerprint": new_fingerprint,
+    }
+    old_link = old_manifest.get("superseded_by")
+    if old_link is not None and any(
+        old_link.get(field) != value for field, value in expected_backlink.items()
+    ):
+        raise ValueError("existing run has a conflicting superseded_by link")
+
+    new_manifest_path = new_dir / "manifest.json"
+    if new_manifest_path.is_file():
+        marker_path = new_dir / FLOW_V2.INITIALIZATION_MARKER
+        if marker_path.exists():
+            expected_marker = _initialization_marker(
+                new_dir,
+                _fingerprint(input_data, thesis),
+                FLOW_V2.rubric_fingerprint(rubric),
+                new_fingerprint,
+                old_manifest["run_id"],
+                str(old_dir),
+            )
+            try:
+                marker = read_json(marker_path)
+            except (OSError, json.JSONDecodeError) as error:
+                raise ValueError(f"initialization marker is invalid: {error}") from error
+            if marker != expected_marker:
+                raise ValueError("initialization marker conflicts with destination manifest")
+        new_manifest = read_json(new_manifest_path)
+        _, _, _, stored_new_fingerprint = _stored_v2_flow(
+            new_dir, new_manifest, require_active=True, validate_links=False
+        )
+        if (
+            stored_new_fingerprint != new_fingerprint
+            or new_manifest.get("run_id") != new_dir.name
+            or new_manifest.get("supersedes_run_id") != old_manifest.get("run_id")
+            or new_manifest.get("supersedes_run_path") != str(old_dir)
+        ):
+            raise ValueError("existing destination has conflicting superseding linkage")
+        if marker_path.exists():
+            marker_path.unlink()
+        result = {"resumed": True, "manifest": new_manifest}
+    else:
+        if old_link is not None:
+            raise ValueError("superseded_by link points to a missing destination run")
+        result = initialize_run(
+            new_dir,
+            input_path,
+            thesis_path,
+            rubric_path,
+            _supersedes_run_id=old_manifest["run_id"],
+            _supersedes_run_path=str(old_dir),
+        )
+        new_manifest = result["manifest"]
+
+    if old_link is None:
+        now = utc_now()
+        linked_old_manifest = dict(old_manifest)
+        linked_old_manifest["superseded_by"] = {**expected_backlink, "linked_at": now}
+        linked_old_manifest["updated_at"] = now
+        atomic_write_json(old_manifest_path, linked_old_manifest)
+    return result
 
 
 def _safe_artifact(run_dir: Path, relative: str) -> Path:
@@ -416,8 +1119,13 @@ def _validate_completion_contract(
     errors: list[str] = []
     if stage == "sourcing":
         retrieval_path = run_dir / "sourcing" / "retrieval.json"
-        _validate_retrieval(retrieval_path, errors, "sourcing retrieval")
+        _validate_retrieval(
+            retrieval_path, errors, "sourcing retrieval", max_results=None
+        )
         retrieval = _add_json_error(retrieval_path, errors, "sourcing retrieval") or {}
+        manifest = _add_json_error(run_dir / "manifest.json", errors, "manifest") or {}
+        if manifest.get("version") == 2 and retrieval.get("provider") != "source_snapshots":
+            errors.append("current flow sourcing requires provider source_snapshots")
         candidates = _add_json_error(
             run_dir / "sourcing" / "candidates.json", errors, "candidates"
         )
@@ -434,8 +1142,25 @@ def _validate_completion_contract(
             excluded = candidates.get("excluded")
             if not isinstance(retained, list) or not isinstance(excluded, list):
                 errors.append("candidates and excluded must be arrays")
-            elif candidates.get("actual_count") != len(retained):
-                errors.append("actual_count does not match retained candidate count")
+            else:
+                if candidates.get("actual_count") != len(retained):
+                    errors.append("actual_count does not match retained candidate count")
+                try:
+                    expected_count = normalize_input(read_json(run_dir / "input.json"))[
+                        "sourcing"
+                    ]["target_count"]
+                except (KeyError, OSError, json.JSONDecodeError, TypeError, ValueError) as error:
+                    errors.append(f"unable to validate sourcing requested_count: {error}")
+                else:
+                    if candidates.get("requested_count") != expected_count:
+                        errors.append(
+                            "sourcing requested_count does not match the flow target_count"
+                        )
+                if not 10 <= len(retained) <= 20:
+                    errors.append(
+                        f"completed sourcing requires 10 through 20 retained candidates; found {len(retained)}"
+                    )
+                _validate_flow_sourcing(candidates, errors, retrieval)
             if candidates.get("provider") != retrieval.get("provider"):
                 errors.append("sourcing provider does not match retrieval artifact")
             if candidates.get("query") != retrieval.get("query"):
@@ -452,6 +1177,9 @@ def _validate_completion_contract(
             if not isinstance(evidence, dict):
                 errors.append("evidence.json must be an object")
             else:
+                candidate = _candidate_by_slug(run_dir, company, errors)
+                if candidate is not None:
+                    _validate_evidence_identity_and_sources(evidence, candidate, errors)
                 coverage = evidence.get("coverage")
                 if not isinstance(coverage, dict) or any(
                     coverage.get(category) not in {"present", "missing"}
@@ -527,14 +1255,21 @@ def _validate_completion_contract(
         evidence = _add_json_error(
             run_dir / "companies" / company / "evidence.json", errors, "evidence"
         ) or {}
-        claim_ids = {
-            claim.get("id"): claim for claim in evidence.get("claims", [])
-            if isinstance(claim, dict) and claim.get("id")
-        }
+        candidate = _candidate_by_slug(run_dir, company, errors)
+        claim_ids = (
+            _validate_evidence_identity_and_sources(evidence, candidate, errors)
+            if candidate is not None else {}
+        )
+        used_claim_ids: set[str] = set()
         score, call = _parse_analysis(
             run_dir / "companies" / company / "analysis.md", errors, company, claim_ids,
             evidence.get("coverage", {}),
+            _rubric_weights(run_dir, errors),
+            used_claim_ids,
+            candidate.get("website") if candidate is not None else None,
         )
+        for claim_id in sorted(set(claim_ids) - used_claim_ids):
+            errors.append(f"unused claim for {company}: {claim_id}")
         try:
             thresholds = read_json(run_dir / "input.json")["recommendation_thresholds"]
             if score is not None and call and call.lower() != _expected_call(score, thresholds).lower():
@@ -545,14 +1280,21 @@ def _validate_completion_contract(
         evidence = _add_json_error(
             run_dir / "companies" / company / "evidence.json", errors, "evidence"
         ) or {}
-        claim_ids = {
-            claim.get("id"): claim for claim in evidence.get("claims", [])
-            if isinstance(claim, dict) and claim.get("id")
-        }
+        candidate = _candidate_by_slug(run_dir, company, errors)
+        claim_ids = (
+            _validate_evidence_identity_and_sources(evidence, candidate, errors)
+            if candidate is not None else {}
+        )
+        used_claim_ids: set[str] = set()
         score, call = _parse_analysis(
             run_dir / "companies" / company / "analysis.md", errors, company, claim_ids,
             evidence.get("coverage", {}),
+            _rubric_weights(run_dir, errors),
+            used_claim_ids,
+            candidate.get("website") if candidate is not None else None,
         )
+        for claim_id in sorted(set(claim_ids) - used_claim_ids):
+            errors.append(f"unused claim for {company}: {claim_id}")
         memo_score, memo_call = _parse_memo(
             run_dir / "companies" / company / "memo.md", errors, company
         )
@@ -587,6 +1329,9 @@ def update_stage(
     run_dir = Path(run_dir)
     manifest_path = run_dir / "manifest.json"
     manifest = read_json(manifest_path)
+    if not isinstance(manifest, dict) or manifest.get("version") != 2:
+        raise ValueError("manifest.version must be 2 for stage updates")
+    _stored_v2_flow(run_dir, manifest, require_active=True)
     if company:
         if stage in {"sourcing", "validation"}:
             raise ValueError(f"{stage} is a run-level stage")
@@ -601,6 +1346,22 @@ def update_stage(
     if stage == "research" and status == "running" and int(record.get("attempt_count", 0)) >= 2:
         raise ValueError("research permits one initial attempt and one retry")
     if status == "completed":
+        if stage == "sourcing" and provider != "source_snapshots":
+            raise ValueError("current flow sourcing requires provider source_snapshots")
+        if company:
+            predecessor = {"research": "sourcing", "analysis": "research", "memo": "analysis"}.get(stage)
+            if predecessor == "sourcing":
+                predecessor_status = manifest.get("stages", {}).get("sourcing", {}).get("status")
+            elif predecessor:
+                predecessor_status = manifest.get("companies", {}).get(company, {}).get(
+                    predecessor, {}
+                ).get("status")
+            else:
+                predecessor_status = "completed"
+            if predecessor and predecessor_status != "completed":
+                raise ValueError(
+                    f"company {company} {stage} cannot complete until {predecessor} is completed"
+                )
         if not artifact_list:
             raise ValueError("completed stage requires at least one artifact")
         for relative in artifact_list:
@@ -637,7 +1398,7 @@ def _add_json_error(path: Path, errors: list[str], label: str):
 
 
 def _validate_retrieval(
-    path: Path, errors: list[str], label: str, *, max_results: int = 20
+    path: Path, errors: list[str], label: str, *, max_results: int | None = 20
 ) -> set[str]:
     value = _add_json_error(path, errors, label)
     urls = set()
@@ -646,7 +1407,7 @@ def _validate_retrieval(
     for field in ("query", "provider", "retrieved_at", "status", "exit_code", "results"):
         if field not in value:
             errors.append(f"{label} missing {field}")
-    if value.get("provider") not in {"exa", "web"}:
+    if value.get("provider") not in PROVIDERS:
         errors.append(f"{label} has invalid provider: {value.get('provider')}")
     if value.get("status") not in {"ok", "failed", "partial"}:
         errors.append(f"{label} has invalid status: {value.get('status')}")
@@ -661,7 +1422,7 @@ def _validate_retrieval(
     if not isinstance(value.get("results"), list):
         errors.append(f"{label} results must be an array")
         return urls
-    if len(value["results"]) > max_results:
+    if max_results is not None and len(value["results"]) > max_results:
         errors.append(f"{label} contains more than {max_results} results")
     for result in value["results"]:
         if not isinstance(result, dict):
@@ -669,6 +1430,11 @@ def _validate_retrieval(
             continue
         if result.get("url"):
             url = canonicalize_url(result["url"])
+            if url is None:
+                errors.append(
+                    f"{label} result URL must be absolute HTTP(S) with a nonempty hostname"
+                )
+                continue
             if url in urls:
                 errors.append(f"duplicate retrieval URL in {label}: {url}")
             urls.add(url)
@@ -717,7 +1483,7 @@ def _validate_manifest(run_dir: Path, manifest: dict, errors: list[str]) -> None
             errors.append(f"manifest attempt_count is invalid for {label}")
         if stage == "research" and isinstance(attempts, int) and attempts > 2:
             errors.append(f"research attempts exceed initial pass plus one retry for {label}")
-        if record.get("provider") not in {None, "exa", "web"}:
+        if record.get("provider") not in {None, *PROVIDERS}:
             errors.append(f"manifest provider is invalid for {label}")
         exit_code = record.get("exit_code")
         if exit_code is not None and (
@@ -739,19 +1505,151 @@ def _validate_manifest(run_dir: Path, manifest: dict, errors: list[str]) -> None
                 errors.append(f"manifest artifact is invalid for {label}: {error}")
 
 
+def _rubric_weights(run_dir: Path, errors: list[str]) -> dict[str, int]:
+    rubric = _add_json_error(run_dir / "rubric.json", errors, "rubric")
+    if not isinstance(rubric, dict):
+        return {label: 20 for label in SCORE_LABELS}
+    categories = rubric.get("categories")
+    if not isinstance(categories, list):
+        errors.append("rubric categories must be an array")
+        return {label: 20 for label in SCORE_LABELS}
+    weights: dict[str, int] = {}
+    for index, category in enumerate(categories):
+        if not isinstance(category, dict):
+            errors.append(f"rubric category {index} must be an object")
+            continue
+        name, weight = category.get("name"), category.get("weight")
+        if name not in SCORE_LABELS or isinstance(weight, bool) or not isinstance(weight, int):
+            errors.append(f"invalid rubric category or weight at index {index}")
+            continue
+        if name in weights:
+            errors.append(f"duplicate rubric category: {name}")
+        weights[name] = weight
+    if tuple(weights) != SCORE_LABELS:
+        errors.append("analysis rubric must use the exact five flow categories in order")
+        return {label: 20 for label in SCORE_LABELS}
+    if sum(weights.values()) != 100:
+        errors.append("analysis rubric weights must total 100")
+    return weights
+
+
+NARRATIVE_REFERENCE = re.compile(
+    r"\s*\[refs:\s*([A-Za-z0-9_.-]+(?:\s*,\s*[A-Za-z0-9_.-]+)*)\]\s*$"
+)
+FACTUAL_NARRATIVE = re.compile(
+    r"(?:[$€£₹]\s*\d|\b\d+(?:\.\d+)?%|\b(?:arr|mrr|revenue|retention|churn|"
+    r"customers?|users?|employees?|founded|launched|raised|growth|grew|declined|"
+    r"increased|decreased|contracts?|sales|market share|signed|pilots?)\b)",
+    re.IGNORECASE,
+)
+ASSERTIVE_NARRATIVE = re.compile(
+    r"\b(?:is|are|was|were|has|have|had|reports?|reported|signed|serves?|offers?|"
+    r"provides?|grew|declined|increased|decreased|fell|reached|generated)\b",
+    re.IGNORECASE,
+)
+UNCERTAINTY_NARRATIVE = re.compile(
+    r"\b(?:could|may|might|whether|unknown|unclear|unverified|"
+    r"needs? (?:confirmation|verification))\b",
+    re.IGNORECASE,
+)
+
+
+def _is_pure_uncertainty(statement: str) -> bool:
+    if re.match(r"^(?:verify|confirm)\b", statement, re.IGNORECASE):
+        return True
+    uncertainty = UNCERTAINTY_NARRATIVE.search(statement)
+    is_question = statement.rstrip().endswith("?")
+    if not uncertainty and not is_question:
+        return False
+    boundary = uncertainty.start() if uncertainty else len(statement)
+    premise = statement[:boundary]
+    if re.search(r"[,;]|\bbut\b", premise, re.IGNORECASE):
+        clauses = re.split(r"[,;]|\bbut\b", premise, flags=re.IGNORECASE)
+        return not any(
+            FACTUAL_NARRATIVE.search(clause) and ASSERTIVE_NARRATIVE.search(clause)
+            for clause in clauses
+        )
+    return not (
+        FACTUAL_NARRATIVE.search(premise) and ASSERTIVE_NARRATIVE.search(premise)
+    )
+
+
+def _narrative_content(stripped: str) -> tuple[str, str]:
+    heading = re.match(r"^#{1,6}\s+(.+?)\s*$", stripped)
+    if heading:
+        return "heading", heading.group(1).strip()
+    if stripped.startswith("|"):
+        return "table", stripped.strip("|").strip()
+    bullet = re.match(r"^[-*]\s+(.+)$", stripped)
+    if bullet:
+        return "bullet", bullet.group(1).strip()
+    return "prose", stripped
+
+
+def _validate_analysis_narrative(
+    text: str,
+    errors: list[str],
+    name: str,
+    claim_ids: dict[str, dict],
+    used_claim_ids: set[str] | None,
+) -> None:
+    section = ""
+    for line_number, raw_line in enumerate(text.splitlines(), start=1):
+        stripped = raw_line.strip()
+        if not stripped:
+            continue
+        representation, narrative = _narrative_content(stripped)
+        reference_match = NARRATIVE_REFERENCE.search(narrative)
+        statement = (
+            narrative[: reference_match.start()].strip()
+            if reference_match
+            else narrative
+        )
+        if representation == "heading":
+            section = statement.casefold()
+        if statement.strip("*_").casefold() in {"pass", "watch", "take a meeting"}:
+            continue
+        if reference_match:
+            if not statement:
+                errors.append(f"empty narrative statement for {name} at line {line_number}")
+            for claim_id in [
+                item.strip() for item in reference_match.group(1).split(",")
+            ]:
+                if claim_id not in claim_ids:
+                    errors.append(
+                        f"unknown narrative reference for {name} at line {line_number}: {claim_id}"
+                    )
+                elif used_claim_ids is not None:
+                    used_claim_ids.add(claim_id)
+            continue
+        factual = FACTUAL_NARRATIVE.search(narrative) is not None
+        if factual and not _is_pure_uncertainty(narrative):
+            errors.append(
+                f"factual narrative for {name} at line {line_number} requires a trailing "
+                "[refs: claim-id] list"
+            )
+            continue
+
+
 def _parse_analysis(
     path: Path,
     errors: list[str],
     name: str,
     claim_ids: dict[str, dict],
     coverage: dict | None = None,
+    rubric_weights: dict[str, int] | None = None,
+    used_claim_ids: set[str] | None = None,
+    company_website: str | None = None,
 ):
     if not path.exists():
         errors.append(f"missing analysis for {name}")
         return None, None
     text = path.read_text(encoding="utf-8")
+    if not re.search(r"^## Risks and open questions\s*$", text, re.MULTILINE):
+        errors.append(f"analysis for {name} requires exact heading: ## Risks and open questions")
+    weights = rubric_weights or {label: 20 for label in SCORE_LABELS}
     scores = []
-    for label in SCORE_LABELS:
+    for label, weight in weights.items():
         match = re.search(
             rf"^\|\s*{re.escape(label)}\s*\|\s*(\d+)\s*\|\s*([^|]+)\|",
             text,
@@ -764,8 +1662,8 @@ def _parse_analysis(
         refs = [part.strip() for part in match.group(2).split(",") if part.strip()]
         if not refs:
             errors.append(f"score row requires an evidence reference for {name}: {label}")
-        if not 0 <= score <= 20:
-            errors.append(f"score out of range for {name}: {label}={score}")
+        if not 0 <= score <= weight:
+            errors.append(f"score out of range for {name}: {label}={score}; weight={weight}")
         if refs and all(ref.lower().startswith("gap:") for ref in refs) and score != 0:
             errors.append(f"gap-only score row must receive zero for {name}: {label}")
         for ref in refs:
@@ -773,17 +1671,14 @@ def _parse_analysis(
                 claim_id = ref.split(":", 1)[1]
                 if claim_id not in claim_ids:
                     errors.append(f"unknown claim reference for {name}: {ref}")
+                elif used_claim_ids is not None:
+                    used_claim_ids.add(claim_id)
             elif ref.lower().startswith("gap:"):
                 if ref.split(":", 1)[1].lower() not in CATEGORIES:
                     errors.append(f"unknown gap reference for {name}: {ref}")
             else:
                 errors.append(f"invalid evidence reference for {name}: {ref}")
-        required_area = {
-            "Team": "team",
-            "Product differentiation": "product",
-            "Market attractiveness": "market",
-            "Traction": "traction",
-        }.get(label)
+        required_area = SCORE_COVERAGE.get(label)
         referenced_areas = {
             claim_ids.get(ref.split(":", 1)[1], {}).get("area")
             for ref in refs if ref.lower().startswith("claim:")
@@ -792,6 +1687,10 @@ def _parse_analysis(
             claim_ids.get(ref.split(":", 1)[1], {})
             for ref in refs if ref.lower().startswith("claim:")
         ]
+        category_claims = [
+            claim for claim in usable_claims
+            if required_area is None or claim.get("area") == required_area
+        ]
         if score > 0 and not any(
             claim and claim.get("claim_type") != "unknown" for claim in usable_claims
         ):
@@ -799,18 +1698,35 @@ def _parse_analysis(
         if score > 0 and required_area and required_area not in referenced_areas:
             errors.append(f"score row lacks {required_area} evidence for {name}: {label}")
         if (
-            score > 0
+            score != 0
             and required_area
             and isinstance(coverage, dict)
             and coverage.get(required_area) != "present"
         ):
-            errors.append(f"positive {required_area} score but {required_area} coverage is missing for {name}")
+            errors.append(
+                f"missing coverage must score zero for {name}: {label}={score} "
+                f"({required_area} coverage is missing)"
+            )
+        if (
+            score > 10
+            and label in COMPANY_CLAIM_CAPPED_CATEGORIES
+            and category_claims
+            and all(
+                _is_company_originated(claim.get("source_url"), company_website)
+                for claim in category_claims
+            )
+        ):
+            errors.append(
+                f"company-claim-only/company-originated {label} score is capped at 10 "
+                f"for {name}: {score}"
+            )
         scores.append(score)
+    _validate_analysis_narrative(text, errors, name, claim_ids, used_claim_ids)
     final_match = re.search(r"\*\*Final score\*\*\s*\|\s*\*\*(\d+)\s*/\s*100\*\*", text, re.I)
     final_score = int(final_match.group(1)) if final_match else None
     if final_score is None:
         errors.append(f"missing final score for {name}")
-    elif len(scores) == len(SCORE_LABELS) and final_score != sum(scores):
+    elif len(scores) == len(weights) and final_score != sum(scores):
         errors.append(f"score arithmetic mismatch for {name}: {final_score} != {sum(scores)}")
     recommendation = None
     recommendation_match = re.search(
@@ -903,6 +1819,7 @@ def _validate_new(run_dir: Path) -> dict:
     thesis_text = thesis_path.read_text(encoding="utf-8") if thesis_path.exists() else ""
     if not thesis_text.strip():
         errors.append("missing or empty thesis.md")
+    rubric_weights = _rubric_weights(run_dir, errors)
     manifest = _add_json_error(run_dir / "manifest.json", errors, "manifest") or {}
     _validate_manifest(run_dir, manifest, errors)
     if isinstance(input_data, dict) and thesis_text.strip():
@@ -913,7 +1830,10 @@ def _validate_new(run_dir: Path) -> dict:
         errors.append("candidates.json must be an object")
         sourcing = {}
     sourcing_urls = _validate_retrieval(
-        run_dir / "sourcing" / "retrieval.json", errors, "sourcing retrieval"
+        run_dir / "sourcing" / "retrieval.json",
+        errors,
+        "sourcing retrieval",
+        max_results=None,
     )
     try:
         sourcing_retrieval = read_json(run_dir / "sourcing" / "retrieval.json")
@@ -922,8 +1842,16 @@ def _validate_new(run_dir: Path) -> dict:
     for field in ("provider", "query", "retrieval_path", "requested_count", "actual_count"):
         if field not in sourcing:
             errors.append(f"candidates missing {field}")
-    if sourcing.get("provider") not in {"exa", "web"}:
+    if sourcing.get("provider") not in PROVIDERS:
         errors.append(f"candidates has invalid provider: {sourcing.get('provider')}")
+    if manifest.get("version") == 2 and sourcing.get("provider") != "source_snapshots":
+        errors.append("current flow sourcing requires provider source_snapshots")
+    manifest_sourcing_provider = manifest.get("stages", {}).get("sourcing", {}).get("provider")
+    if manifest.get("version") == 2:
+        if manifest_sourcing_provider != "source_snapshots":
+            errors.append("current flow manifest sourcing provider must be source_snapshots")
+        elif manifest_sourcing_provider != sourcing.get("provider"):
+            errors.append("manifest sourcing provider does not match candidates artifact")
     if sourcing.get("retrieval_path") != "sourcing/retrieval.json":
         errors.append("candidates retrieval_path must be sourcing/retrieval.json")
     if isinstance(sourcing_retrieval, dict):
@@ -936,21 +1864,31 @@ def _validate_new(run_dir: Path) -> dict:
             and sourcing_retrieval.get("status") != "ok"
         ):
             errors.append("completed sourcing requires a successful retrieval artifact")
-    candidates = sourcing.get("candidates", [])
-    excluded = sourcing.get("excluded", [])
-    if not isinstance(candidates, list) or not isinstance(excluded, list):
-        errors.append("candidates and excluded must be arrays")
-        candidates, excluded = [], []
+    candidates, excluded = _validate_flow_sourcing(
+        sourcing, errors, sourcing_retrieval
+    )
     if sourcing.get("actual_count") != len(candidates):
         errors.append("actual_count does not match retained candidate count")
     expected_requested = input_data.get("sourcing", {}).get("target_count") if isinstance(input_data, dict) else None
     if sourcing.get("requested_count") != expected_requested:
         errors.append("requested_count does not match input sourcing target")
-    if len(candidates) > 20:
-        errors.append("retained candidate count exceeds 20")
+    sourcing_status = manifest.get("stages", {}).get("sourcing", {}).get("status")
+    if not 10 <= len(candidates) <= 20:
+        if len(candidates) < 10:
+            errors.append(
+                f"fewer than 10 retained candidates must leave sourcing partial; found {len(candidates)}"
+            )
+        else:
+            errors.append("retained candidate count exceeds 20")
+        if sourcing_status == "completed":
+            errors.append("completed sourcing requires 10 through 20 retained candidates")
+        elif len(candidates) < 10 and sourcing_status != "partial":
+            errors.append("sourcing with fewer than 10 candidates must have partial manifest status")
     research_config = input_data.get("research", {}) if isinstance(input_data, dict) else {}
-    research_limit = research_config.get("limit", 8)
-    full_coverage = research_config.get("full_coverage", False)
+    if research_config != {"full_coverage": True}:
+        errors.append(
+            "flow-v2 research must contain only full_coverage=true and no limit"
+        )
     seen_names, seen_sites, seen_slugs, seen_priorities = set(), set(), set(), set()
     selected = []
     for candidate in candidates:
@@ -989,16 +1927,23 @@ def _validate_new(run_dir: Path) -> dict:
         if not isinstance(source_urls, list) or not source_urls:
             errors.append(f"missing source_urls for {name}")
         else:
+            sourcing_provenance_urls = {
+                _provenance_url(url) for url in sourcing_urls if url
+            }
             for source_url in source_urls:
                 canonical = canonicalize_url(source_url)
-                if canonical not in sourcing_urls:
+                if canonical is None:
+                    errors.append(
+                        f"candidate source URL must be absolute HTTP(S) with a hostname for {name}: {source_url}"
+                    )
+                elif _provenance_url(canonical) not in sourcing_provenance_urls:
                     errors.append(f"candidate source URL not present in sourcing retrieval for {name}: {canonical}")
         if not isinstance(candidate.get("selected_for_research"), bool):
             errors.append(f"selected_for_research must be boolean for {name}")
         if candidate.get("selected_for_research"):
             selected.append(candidate)
-            if candidate.get("candidate_type") != "priority" and not full_coverage:
-                errors.append(f"non-priority candidate selected for research: {name}")
+        else:
+            errors.append(f"full coverage requires retained candidate selection: {name}")
     for exclusion in excluded:
         if (
             not isinstance(exclusion, dict)
@@ -1008,26 +1953,11 @@ def _validate_new(run_dir: Path) -> dict:
         ):
             errors.append("invalid exclusion; require name, candidate_type excluded, and reason")
     selected_slugs = {candidate.get("slug") for candidate in selected}
-    if full_coverage:
-        expected_slugs = {candidate.get("slug") for candidate in candidates if isinstance(candidate, dict)}
-        if selected_slugs != expected_slugs:
-            errors.append("full coverage requires every retained candidate to be selected")
-    else:
-        ranked_priority = sorted(
-            (
-                candidate for candidate in candidates
-                if isinstance(candidate, dict)
-                and candidate.get("candidate_type") == "priority"
-                and isinstance(candidate.get("research_priority"), int)
-                and not isinstance(candidate.get("research_priority"), bool)
-            ),
-            key=lambda candidate: candidate["research_priority"],
-        )
-        expected_slugs = {
-            candidate.get("slug") for candidate in ranked_priority[:research_limit]
-        }
-        if selected_slugs != expected_slugs:
-            errors.append("selected candidates must be the top priority candidates within the research limit")
+    expected_slugs = {
+        candidate.get("slug") for candidate in candidates if isinstance(candidate, dict)
+    }
+    if selected_slugs != expected_slugs:
+        errors.append("full coverage requires every retained candidate to be selected")
 
     thresholds = input_data.get("recommendation_thresholds", {"watch_min": 65, "meeting_min": 80})
     summary_skipped = [
@@ -1039,10 +1969,13 @@ def _validate_new(run_dir: Path) -> dict:
     ]
     summary_gaps: list[tuple[str, str]] = []
     summary_retries: list[str] = []
-    for candidate in selected:
+    for candidate in candidates:
         name, slug = candidate["name"], candidate["slug"]
         company_dir = run_dir / "companies" / slug
         evidence = _add_json_error(company_dir / "evidence.json", errors, f"evidence for {name}") or {}
+        identity_claim_ids = _validate_evidence_identity_and_sources(
+            evidence, candidate, errors
+        )
         coverage = evidence.get("coverage", {}) if isinstance(evidence, dict) else {}
         if not isinstance(coverage, dict):
             errors.append(f"coverage for {name} must be an object")
@@ -1172,9 +2105,16 @@ def _validate_new(run_dir: Path) -> dict:
             if source_url and source_url not in retrieval_urls:
                 errors.append(f"claim source URL not present in retrieval for {name}: {source_url}")
 
+        if set(identity_claim_ids) != set(claim_ids):
+            errors.append(f"evidence claim identity mismatch for {name}")
+
+        used_claim_ids: set[str] = set()
         score, call = _parse_analysis(
-            company_dir / "analysis.md", errors, name, claim_ids, coverage
+            company_dir / "analysis.md", errors, name, claim_ids, coverage,
+            rubric_weights, used_claim_ids, candidate.get("website"),
         )
+        for claim_id in sorted(set(claim_ids) - used_claim_ids):
+            errors.append(f"unused claim for {name}: {claim_id}")
         memo_score, memo_call = _parse_memo(company_dir / "memo.md", errors, name)
         if score is not None and call:
             expected_call = _expected_call(score, thresholds)
@@ -1195,8 +2135,18 @@ def _validate_new(run_dir: Path) -> dict:
         if isinstance(retrievals, list) and research_attempts != len(retrievals):
             errors.append(f"manifest research attempts do not match retrieval count for {name}")
         for stage in ("research", "analysis", "memo"):
-            if company_manifest.get(stage, {}).get("status") != "completed":
+            stage_record = company_manifest.get(stage, {})
+            if stage_record.get("status") != "completed":
                 errors.append(f"manifest stage not completed for {name}: {stage}")
+            expected_artifact = {
+                "research": f"companies/{slug}/evidence.json",
+                "analysis": f"companies/{slug}/analysis.md",
+                "memo": f"companies/{slug}/memo.md",
+            }[stage]
+            if expected_artifact not in stage_record.get("artifacts", []):
+                errors.append(
+                    f"manifest {stage} artifacts do not cover {name}: {expected_artifact}"
+                )
     if manifest.get("stages", {}).get("sourcing", {}).get("status") != "completed":
         errors.append("manifest sourcing stage is not completed")
     summary_path = run_dir / "run-summary.md"
@@ -1269,12 +2219,62 @@ def _validate_new(run_dir: Path) -> dict:
 
 def validate_run(run_dir: str | Path) -> dict:
     run_dir = Path(run_dir)
+    manifest_path = run_dir / "manifest.json"
+    marker_path = run_dir / FLOW_V2.INITIALIZATION_MARKER
+    if manifest_path.exists():
+        try:
+            manifest = read_json(manifest_path)
+        except (OSError, json.JSONDecodeError):
+            manifest = None
+        try:
+            result = _validate_new(run_dir)
+            lifecycle_errors = (
+                FLOW_V2.validate_stored_flow(run_dir, manifest)
+                if isinstance(manifest, dict)
+                else []
+            )
+        except (AttributeError, TypeError, ValueError, OSError, UnicodeError) as error:
+            return {
+                "valid": False,
+                "layout": "current",
+                "run_dir": str(run_dir),
+                "errors": [f"malformed current artifacts: {error}"],
+                "warnings": [],
+            }
+        result["errors"] = lifecycle_errors + result["errors"]
+        result["valid"] = not result["errors"]
+        return result
+
+    v2_intended = (run_dir / "rubric.json").exists() or marker_path.exists()
+    try:
+        stored_input = read_json(run_dir / "input.json")
+    except (OSError, json.JSONDecodeError):
+        stored_input = None
+    if isinstance(stored_input, dict) and stored_input.get("version") == 2:
+        v2_intended = True
+    if v2_intended:
+        try:
+            return _validate_new(run_dir)
+        except (AttributeError, TypeError, ValueError, OSError, UnicodeError) as error:
+            return {
+                "valid": False,
+                "layout": "current",
+                "run_dir": str(run_dir),
+                "errors": [f"malformed current artifacts: {error}"],
+                "warnings": [],
+            }
+
     candidates_path = run_dir / "sourcing" / "candidates.json"
     try:
         candidates = read_json(candidates_path)
     except (OSError, json.JSONDecodeError):
         candidates = None
-    if isinstance(candidates, list):
+    affirmative_legacy = (
+        isinstance(candidates, list)
+        and (run_dir / "sourcing" / "sourcing.md").is_file()
+        and (run_dir / "evidence").is_dir()
+    )
+    if affirmative_legacy:
         return _validate_legacy(run_dir)
     return _validate_new(run_dir)
 
@@ -1293,12 +2293,19 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--run-dir", type=Path, required=True)
     init_parser.add_argument("--input", type=Path, required=True)
     init_parser.add_argument("--thesis", type=Path, required=True)
+    init_parser.add_argument("--rubric", type=Path, required=True)
+    supersede_parser = subparsers.add_parser("supersede")
+    supersede_parser.add_argument("--supersedes-run-dir", type=Path, required=True)
+    supersede_parser.add_argument("--run-dir", type=Path, required=True)
+    supersede_parser.add_argument("--input", type=Path, required=True)
+    supersede_parser.add_argument("--thesis", type=Path, required=True)
+    supersede_parser.add_argument("--rubric", type=Path, required=True)
     stage_parser = subparsers.add_parser("stage")
     stage_parser.add_argument("--run-dir", type=Path, required=True)
     stage_parser.add_argument("--stage", choices=sorted(STAGES), required=True)
     stage_parser.add_argument("--status", choices=sorted(STATUSES), required=True)
     stage_parser.add_argument("--company")
-    stage_parser.add_argument("--provider", choices=["exa", "web"])
+    stage_parser.add_argument("--provider", choices=sorted(PROVIDERS))
     stage_parser.add_argument("--exit-code", type=int)
     stage_parser.add_argument("--error")
     stage_parser.add_argument("--artifact", action="append", default=[])
@@ -1321,8 +2328,26 @@ def main(argv=None) -> int:
             print(_compact(result))
             return 0 if result["runtime"]["usable"] else EXIT_RUNTIME
         if args.command == "init":
-            result = initialize_run(args.run_dir, args.input, args.thesis)
+            result = initialize_run(args.run_dir, args.input, args.thesis, args.rubric)
             print(_compact({"status": "ok", "run_dir": str(args.run_dir), "resumed": result["resumed"]}))
+            return 0
+        if args.command == "supersede":
+            result = supersede_run(
+                args.supersedes_run_dir,
+                args.run_dir,
+                args.input,
+                args.thesis,
+                args.rubric,
+            )
+            print(
+                _compact(
+                    {
+                        "status": "ok",
+                        "run_dir": str(args.run_dir),
+                        "supersedes_run_id": result["manifest"]["supersedes_run_id"],
+                    }
+                )
+            )
             return 0
         if args.command == "stage":
             update_stage(
