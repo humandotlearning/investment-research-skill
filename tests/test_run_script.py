@@ -54,16 +54,17 @@ class RunScriptTests(unittest.TestCase):
     def test_preflight_classifies_ready_and_network_failure(self):
         with patch.dict(os.environ, {"EXA_API_KEY": "secret"}, clear=True):
             ready = self.run_module.preflight(sdk_available=True, network_status="reachable")
-            degraded = self.run_module.preflight(
+            offline = self.run_module.preflight(
                 sdk_available=True, network_status="unreachable"
             )
         self.assertTrue(ready["exa_ready"])
         self.assertTrue(ready["snapshot_pipeline_ready"])
         self.assertEqual(ready["recommended_provider"], "source_snapshots")
-        self.assertFalse(degraded["exa_ready"])
-        self.assertFalse(degraded["snapshot_pipeline_ready"])
-        self.assertEqual(degraded["recommended_provider"], "none")
-        self.assertEqual(degraded["failure_class"], "network_unavailable")
+        self.assertFalse(offline["exa_ready"])
+        self.assertTrue(offline["snapshot_pipeline_ready"])
+        self.assertEqual(offline["recommended_provider"], "source_snapshots")
+        self.assertEqual(offline["status"], "ready")
+        self.assertEqual(offline["failure_class"], "network_unavailable")
 
     def test_preflight_recommends_source_snapshots_with_exa_as_diagnostics_only(self):
         with patch.dict(os.environ, {"EXA_API_KEY": "secret"}, clear=True):
@@ -75,6 +76,36 @@ class RunScriptTests(unittest.TestCase):
         self.assertTrue(result.get("snapshot_pipeline_ready"))
         self.assertEqual(result["recommended_provider"], "source_snapshots")
         self.assertNotEqual(result["recommended_provider"], "exa")
+
+    def test_preflight_keeps_local_snapshots_ready_when_network_and_exa_fail(self):
+        with patch.dict(os.environ, {}, clear=True):
+            result = self.run_module.preflight(
+                sdk_available=False, network_status="unreachable"
+            )
+
+        self.assertEqual(result["network_status"], "unreachable")
+        self.assertFalse(result["exa_ready"])
+        self.assertTrue(result["snapshot_pipeline_ready"])
+        self.assertEqual(result["recommended_provider"], "source_snapshots")
+        self.assertEqual(result["status"], "ready")
+
+    def test_network_probe_uses_an_assignment_source_not_exa(self):
+        request_value = object()
+        with patch.object(
+            self.run_module.urllib.request,
+            "Request",
+            return_value=request_value,
+        ) as request, patch.object(
+            self.run_module.urllib.request,
+            "urlopen",
+            side_effect=self.run_module.urllib.error.URLError("offline"),
+        ):
+            status = self.run_module.probe_network()
+
+        requested_url = request.call_args.args[0]
+        self.assertEqual(status, "unreachable")
+        self.assertNotIn("exa", requested_url.lower())
+        self.assertIn("producthunt.com", requested_url.lower())
 
     def test_preflight_output_write_failure_returns_code_six(self):
         with patch.object(

@@ -96,7 +96,7 @@ def _find_env_local(start: Path) -> Path | None:
 
 
 def probe_network() -> str:
-    request = urllib.request.Request("https://api.exa.ai", method="HEAD")
+    request = urllib.request.Request("https://www.producthunt.com/feed", method="HEAD")
     try:
         with urllib.request.urlopen(request, timeout=4):
             return "reachable"
@@ -117,11 +117,7 @@ def preflight(
     if sdk_available is None:
         sdk_available = importlib.util.find_spec("exa_py") is not None
     if network_status is None:
-        network_status = (
-            probe_network()
-            if runtime_usable and key and sdk_available
-            else "not_checked"
-        )
+        network_status = "not_checked"
 
     failures = []
     if not runtime_usable:
@@ -142,18 +138,12 @@ def preflight(
     exa_ready = bool(
         runtime_usable and key and sdk_available and network_status != "unreachable"
     )
-    snapshot_pipeline_ready = bool(
-        runtime_usable and network_status != "unreachable"
-    )
+    snapshot_pipeline_ready = runtime_usable
     failure_class = failures[0]["class"] if failures else None
     if network_status == "unreachable":
         failure_class = "network_unavailable"
     return {
-        "status": (
-            "ready"
-            if snapshot_pipeline_ready
-            else ("degraded" if runtime_usable else "blocked")
-        ),
+        "status": "ready" if snapshot_pipeline_ready else "blocked",
         "runtime": {
             "usable": runtime_usable,
             "executable": sys.executable,
