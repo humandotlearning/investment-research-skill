@@ -125,7 +125,13 @@ def origin_is_allowed(origin: Any) -> bool:
     if canonical_url is None:
         return False
     parsed = urlsplit(canonical_url)
-    return parsed.scheme == "https" and parsed.hostname in ORIGIN_HOSTS[source]
+    if parsed.scheme != "https" or parsed.hostname not in ORIGIN_HOSTS[source]:
+        return False
+    record_path = {
+        "product_hunt": r"/posts/[A-Za-z0-9][A-Za-z0-9._~-]*",
+        "yc": r"/companies/[A-Za-z0-9][A-Za-z0-9._~-]*",
+    }[source]
+    return re.fullmatch(record_path, parsed.path.rstrip("/")) is not None
 
 
 def _origin_is_complete(origin: Any) -> bool:

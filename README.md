@@ -33,7 +33,7 @@ Set `EXA_API_KEY` in the environment, or put it in a repository-local `.env.loca
 EXA_API_KEY=your-key
 ```
 
-The helpers never print or persist the key. They do not install dependencies. Exa is preferred; after a preflight or retrieval failure, the active agent may use native web fallback and must tag the retrieval envelope with `provider: web`.
+The helpers never print or persist the key. They do not install dependencies. Current flows use Product Hunt and YC source snapshots with provider `source_snapshots`, and Hacker News only as an enrichment signal. Exa and native web fallback remain legacy-compatible retrieval providers for older layouts.
 
 ## Install for an agent
 
@@ -65,10 +65,10 @@ Create a small source input and a thesis:
 
 ```sh
 python skills/investment-research-start/scripts/run.py preflight
-python skills/investment-research-start/scripts/run.py init --run-dir runs/2026-08-23-ai-agents-smb --input request.json --thesis thesis.md
+python skills/investment-research-start/scripts/run.py init --run-dir runs/2026-08-23-ai-agents-smb --input request.json --thesis thesis.md --rubric rubric.json
 ```
 
-The initializer materializes defaults of 15 sourced candidates, 8 priority candidates for deep research, `research.full_coverage: false`, `Watch` from 65, and `Take a meeting` from 80.
+The initializer materializes defaults of 10 sourced candidates, `research.full_coverage: true`, and no research limit, with `Watch` from 65 and `Take a meeting` from 80. Provide `rubric.json` with the five thesis-specific scoring categories.
 
 Then invoke the `investment-research-start` skill. It coordinates sourcing, evidence, analysis, memo, manifest updates, atomic commits, and final validation.
 

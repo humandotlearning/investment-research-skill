@@ -140,7 +140,9 @@ class SourceAdapterTests(unittest.TestCase):
             ("product_hunt", "https://acme.example", False),
             ("product_hunt", "https://producthunt.com.evil.example/posts/acme", False),
             ("product_hunt", "https://www.ycombinator.com/companies/acme", False),
+            ("product_hunt", "https://www.producthunt.com/topics/acme", False),
             ("yc", "https://www.producthunt.com/posts/acme", False),
+            ("yc", "https://www.ycombinator.com/blog/acme", False),
             ("hacker_news", "https://news.ycombinator.com/item?id=987654", False),
             ("blog", "https://www.producthunt.com/posts/acme", False),
         ]

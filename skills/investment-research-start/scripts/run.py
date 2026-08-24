@@ -41,7 +41,7 @@ ORIGIN_HOSTS = {
     "product_hunt": {"producthunt.com", "www.producthunt.com"},
     "yc": {"ycombinator.com", "www.ycombinator.com"},
 }
-SOURCING_PROVENANCE_SOURCES = {"product_hunt", "yc", "hacker_news", "official_company"}
+SOURCING_PROVENANCE_SOURCES = {"product_hunt", "yc", "hacker_news"}
 SCORE_COVERAGE = {
     "Team": "team",
     "Product differentiation": "product",
@@ -290,8 +290,6 @@ def _allowed_signal_source(value: object, origins: list[dict], website: object) 
         return False
     if _is_official_hn_item(canonical):
         return True
-    if _host_matches_candidate(canonical, website):
-        return True
     return _provenance_url(canonical) in {
         _provenance_url(origin.get("canonical_url"))
         for origin in origins
@@ -335,8 +333,6 @@ def _signal_provenance_identity(
     if _is_official_hn_item(source_url):
         match = re.fullmatch(r"id=(\d+)", urlsplit(source_url).query)
         return ("hacker_news", match.group(1)) if match else None
-    if _host_matches_candidate(source_url, website):
-        return "official_company", source_url
     return None
 
 
@@ -1127,6 +1123,9 @@ def _validate_completion_contract(
             retrieval_path, errors, "sourcing retrieval", max_results=None
         )
         retrieval = _add_json_error(retrieval_path, errors, "sourcing retrieval") or {}
+        manifest = _add_json_error(run_dir / "manifest.json", errors, "manifest") or {}
+        if manifest.get("version") == 2 and retrieval.get("provider") != "source_snapshots":
+            errors.append("current flow sourcing requires provider source_snapshots")
         candidates = _add_json_error(
             run_dir / "sourcing" / "candidates.json", errors, "candidates"
         )
@@ -1843,6 +1842,8 @@ def _validate_new(run_dir: Path) -> dict:
             errors.append(f"candidates missing {field}")
     if sourcing.get("provider") not in PROVIDERS:
         errors.append(f"candidates has invalid provider: {sourcing.get('provider')}")
+    if manifest.get("version") == 2 and sourcing.get("provider") != "source_snapshots":
+        errors.append("current flow sourcing requires provider source_snapshots")
     if sourcing.get("retrieval_path") != "sourcing/retrieval.json":
         errors.append("candidates retrieval_path must be sourcing/retrieval.json")
     if isinstance(sourcing_retrieval, dict):

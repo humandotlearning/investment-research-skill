@@ -21,7 +21,7 @@ Use the same interpreter for every command. Pass files and ordinary arguments; n
 
 ## Input defaults
 
-`input.json` accepts `seed`, `assumptions`, `sourcing`, `research`, and `recommendation_thresholds`. Defaults materialized by `init` are 15 sourced candidates, 8 deeply researched priority candidates, `research.full_coverage: false`, `Watch` at 65, and `Take a meeting` at 80.
+`input.json` accepts `seed`, `assumptions`, `sourcing`, `research`, and `recommendation_thresholds`. Defaults materialized by `init` are 10 sourced candidates, `research.full_coverage: true`, no research limit, `Watch` at 65, and `Take a meeting` at 80. Initialization requires `thesis.md` and `rubric.json`.
 
 ## Run state
 

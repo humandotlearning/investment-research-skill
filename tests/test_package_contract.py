@@ -56,6 +56,23 @@ class PackageContractTests(unittest.TestCase):
         readme = (ROOT / "README.md").read_text(encoding="utf-8").lower()
         for phrase in ["claude code", "codex", "hermes", "openclaw", "exa", "web fallback"]:
             self.assertIn(phrase, readme)
+        self.assertIn("source_snapshots", readme)
+        self.assertIn("--rubric", readme)
+        self.assertIn("10 sourced candidates", readme)
+        self.assertIn("full_coverage: true", readme)
+        self.assertNotIn("exa is preferred", readme)
+        self.assertNotIn("15 sourced candidates", readme)
+        self.assertNotIn("8 priority candidates", readme)
+        self.assertNotIn("full_coverage: false", readme)
+
+        start_skill = (
+            SKILLS / "investment-research-start" / "SKILL.md"
+        ).read_text(encoding="utf-8").lower()
+        self.assertIn("10 sourced candidates", start_skill)
+        self.assertIn("full_coverage: true", start_skill)
+        self.assertNotIn("15 sourced candidates", start_skill)
+        self.assertNotIn("8 deeply researched priority candidates", start_skill)
+        self.assertNotIn("full_coverage: false", start_skill)
 
     def test_sourcing_skill_uses_snapshot_adapters_for_the_flow_path(self):
         text = (SKILLS / "investment-research-sourcing" / "SKILL.md").read_text(

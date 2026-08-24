@@ -580,6 +580,61 @@ class FlowEvidenceCoverageTests(unittest.TestCase):
             self.assertFalse(result["valid"], result)
             self.assertTrue(any(phrase in error.lower() for error in result["errors"]), result["errors"])
 
+    def test_current_flow_sourcing_requires_source_snapshots_provider(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = self.make_complete_run(Path(directory))
+            candidates_path = run_dir / "sourcing" / "candidates.json"
+            candidates = json.loads(candidates_path.read_text(encoding="utf-8"))
+            candidates["provider"] = "web"
+            candidates_path.write_text(json.dumps(candidates), encoding="utf-8")
+            retrieval_path = run_dir / "sourcing" / "retrieval.json"
+            retrieval = json.loads(retrieval_path.read_text(encoding="utf-8"))
+            retrieval["provider"] = "web"
+            retrieval_path.write_text(json.dumps(retrieval), encoding="utf-8")
+            manifest_path = run_dir / "manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["stages"]["sourcing"]["provider"] = "web"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            result = self.run_module.validate_run(run_dir)
+
+        self.assertFalse(result["valid"], result)
+        self.assertTrue(any("source_snapshots" in error for error in result["errors"]), result["errors"])
+
+    def test_current_flow_rejects_official_company_sourcing_signal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = self.make_complete_run(Path(directory))
+            candidates_path = run_dir / "sourcing" / "candidates.json"
+            candidates = json.loads(candidates_path.read_text(encoding="utf-8"))
+            candidate = candidates["candidates"][0]
+            website = candidate["website"]
+            candidate["freshness_or_traction_signals"].append(
+                {"kind": "traction", "source_url": website, "score": 10}
+            )
+            candidate["source_urls"].append(website)
+            candidates_path.write_text(json.dumps(candidates), encoding="utf-8")
+            retrieval_path = run_dir / "sourcing" / "retrieval.json"
+            retrieval = json.loads(retrieval_path.read_text(encoding="utf-8"))
+            retrieval["results"].append(
+                {
+                    "title": candidate["name"],
+                    "candidate_name": candidate["name"],
+                    "candidate_slug": candidate["slug"],
+                    "candidate_website": website,
+                    "url": website,
+                    "source": "official_company",
+                    "source_id": website,
+                    "published_date": None,
+                    "highlights": ["Official company traction."],
+                }
+            )
+            retrieval_path.write_text(json.dumps(retrieval), encoding="utf-8")
+
+            result = self.run_module.validate_run(run_dir)
+
+        self.assertFalse(result["valid"], result)
+        self.assertTrue(any("official company" in error.lower() or "hn" in error.lower() for error in result["errors"]), result["errors"])
+
     def test_origin_provenance_comparison_normalizes_tracking_query(self):
         with tempfile.TemporaryDirectory() as directory:
             run_dir = self.make_complete_run(Path(directory))
