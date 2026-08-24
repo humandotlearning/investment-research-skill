@@ -1,4 +1,4 @@
-"""Run offline assignment sourcing or the legacy Exa retrieval helper."""
+"""Run offline flow sourcing or the legacy Exa retrieval helper."""
 
 from __future__ import annotations
 
@@ -305,9 +305,9 @@ def _legacy_main(argv=None) -> int:
 
 def _load_source_adapters():
     path = Path(__file__).with_name("sources.py")
-    spec = importlib.util.spec_from_file_location("assignment_source_adapters", path)
+    spec = importlib.util.spec_from_file_location("flow_source_adapters", path)
     if spec is None or spec.loader is None:
-        raise RetrievalError("assignment source adapters are unavailable", EXIT_RUNTIME)
+        raise RetrievalError("flow source adapters are unavailable", EXIT_RUNTIME)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

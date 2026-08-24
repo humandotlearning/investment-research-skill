@@ -1,4 +1,4 @@
-"""Assignment-v2 input, rubric, and fingerprint contracts."""
+"""Flow-v2 input, rubric, and fingerprint contracts."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 VERSION = 2
-INITIALIZATION_MARKER = ".assignment-v2-init.json"
+INITIALIZATION_MARKER = ".flow-v2-init.json"
 RUBRIC_CATEGORIES = (
     "Team",
     "Product differentiation",
@@ -32,7 +32,7 @@ STOPWORDS = {
 
 
 def normalize_input(value: dict) -> dict:
-    """Validate and materialize the assignment-v2 input contract."""
+    """Validate and materialize the flow-v2 input contract."""
     if not isinstance(value, dict):
         raise ValueError("input must be a JSON object")
     if value.get("version", VERSION) != VERSION:
@@ -74,7 +74,7 @@ def normalize_input(value: dict) -> dict:
     if full_coverage is not True:
         raise ValueError("research.full_coverage must be exactly true")
     if "limit" in research:
-        raise ValueError("research.limit is not allowed for assignment-v2 full coverage")
+        raise ValueError("research.limit is not allowed for flow-v2 full coverage")
     normalized_research = {"full_coverage": True}
     watch_min = thresholds.get("watch_min", 65)
     meeting_min = thresholds.get("meeting_min", 80)
@@ -171,7 +171,7 @@ def rubric_fingerprint(rubric: dict) -> str:
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
-def assignment_fingerprint(input_data: dict, thesis: str, rubric: dict) -> str:
+def flow_fingerprint(input_data: dict, thesis: str, rubric: dict) -> str:
     payload = {"input": input_data, "thesis": thesis, "rubric": rubric}
     serialized = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
@@ -210,7 +210,7 @@ def _read_linked_manifest(target: Path, label: str, errors: list[str]) -> dict |
     except (OSError, json.JSONDecodeError, ValueError) as error:
         errors.append(f"{label} linked target manifest is invalid: {error}")
         return None
-    target_errors = validate_stored_assignment(target, value, validate_links=False)
+    target_errors = validate_stored_flow(target, value, validate_links=False)
     errors.extend(f"{label} linked target {error}" for error in target_errors)
     return value
 
@@ -224,30 +224,30 @@ def _same_resolved_path(path_value: object, expected: Path) -> bool:
         return False
 
 
-def validate_stored_assignment(
+def validate_stored_flow(
     run_dir: str | Path, manifest: dict, *, validate_links: bool = True
 ) -> list[str]:
-    """Return lifecycle errors for a stored v2 assignment without writing files."""
+    """Return lifecycle errors for a stored v2 flow without writing files."""
     run_dir = Path(run_dir)
     errors: list[str] = []
     try:
         input_data = normalize_input(json.loads((run_dir / "input.json").read_text(encoding="utf-8")))
     except (OSError, json.JSONDecodeError, ValueError) as error:
-        errors.append(f"invalid assignment-v2 input.json: {error}")
+        errors.append(f"invalid flow-v2 input.json: {error}")
         input_data = None
     try:
         thesis = (run_dir / "thesis.md").read_text(encoding="utf-8")
         if not thesis.strip():
             raise ValueError("thesis.md must not be empty")
     except (OSError, ValueError) as error:
-        errors.append(f"invalid assignment-v2 thesis.md: {error}")
+        errors.append(f"invalid flow-v2 thesis.md: {error}")
         thesis = None
     try:
         rubric = json.loads((run_dir / "rubric.json").read_text(encoding="utf-8"))
         if thesis is not None:
             validate_rubric(rubric, thesis)
     except (OSError, json.JSONDecodeError, ValueError) as error:
-        errors.append(f"invalid assignment-v2 rubric.json: {error}")
+        errors.append(f"invalid flow-v2 rubric.json: {error}")
         rubric = None
     if not isinstance(manifest, dict):
         return ["manifest must be a JSON object"]
@@ -259,8 +259,8 @@ def validate_stored_assignment(
     if input_data is not None and thesis is not None and rubric is not None:
         if manifest.get("input_fingerprint") != input_fingerprint(input_data, thesis):
             errors.append("manifest input fingerprint does not match input.json and thesis.md")
-        if manifest.get("assignment_fingerprint") != assignment_fingerprint(input_data, thesis, rubric):
-            errors.append("manifest assignment fingerprint does not match input, thesis, and rubric")
+        if manifest.get("flow_fingerprint") != flow_fingerprint(input_data, thesis, rubric):
+            errors.append("manifest flow fingerprint does not match input, thesis, and rubric")
         if manifest.get("rubric_fingerprint") != rubric_fingerprint(rubric):
             errors.append("manifest rubric fingerprint does not match rubric.json")
     supersedes_run_id = manifest.get("supersedes_run_id")
@@ -280,17 +280,17 @@ def validate_stored_assignment(
         if not isinstance(superseded_by, dict) or any(
             not isinstance(superseded_by.get(field), str)
             or not superseded_by.get(field, "").strip()
-            for field in ("run_id", "path", "assignment_fingerprint", "linked_at")
+            for field in ("run_id", "path", "flow_fingerprint", "linked_at")
         ):
             errors.append("manifest superseded_by linkage is invalid")
-        elif not re.fullmatch(r"[0-9a-f]{64}", superseded_by["assignment_fingerprint"]):
-            errors.append("manifest superseded_by linkage has an invalid assignment fingerprint")
+        elif not re.fullmatch(r"[0-9a-f]{64}", superseded_by["flow_fingerprint"]):
+            errors.append("manifest superseded_by linkage has an invalid flow fingerprint")
 
     if not validate_links:
         return errors
 
     current_path = run_dir.resolve()
-    current_fingerprint = manifest.get("assignment_fingerprint")
+    current_fingerprint = manifest.get("flow_fingerprint")
     if isinstance(supersedes_run_id, str) and isinstance(supersedes_run_path, str):
         target = _resolved_link_target(run_dir, supersedes_run_path, "supersedes", errors)
         if target is not None:
@@ -304,16 +304,16 @@ def validate_stored_assignment(
                 else:
                     if reciprocal.get("run_id") != run_id:
                         errors.append("supersedes target reciprocal run_id does not match")
-                    if reciprocal.get("assignment_fingerprint") != current_fingerprint:
+                    if reciprocal.get("flow_fingerprint") != current_fingerprint:
                         errors.append(
-                            "supersedes target reciprocal assignment fingerprint does not match"
+                            "supersedes target reciprocal flow fingerprint does not match"
                         )
                     if not _same_resolved_path(reciprocal.get("path"), current_path):
                         errors.append("supersedes target reciprocal path does not match")
 
     if isinstance(superseded_by, dict) and all(
         isinstance(superseded_by.get(field), str)
-        for field in ("run_id", "path", "assignment_fingerprint")
+        for field in ("run_id", "path", "flow_fingerprint")
     ):
         target = _resolved_link_target(run_dir, superseded_by["path"], "superseded_by", errors)
         if target is not None:
@@ -321,11 +321,11 @@ def validate_stored_assignment(
             if target_manifest is not None:
                 if target_manifest.get("run_id") != superseded_by["run_id"]:
                     errors.append("superseded_by target run_id does not match the backward link")
-                if target_manifest.get("assignment_fingerprint") != superseded_by.get(
-                    "assignment_fingerprint"
+                if target_manifest.get("flow_fingerprint") != superseded_by.get(
+                    "flow_fingerprint"
                 ):
                     errors.append(
-                        "superseded_by target assignment fingerprint does not match the backward link"
+                        "superseded_by target flow fingerprint does not match the backward link"
                     )
                 if target_manifest.get("supersedes_run_id") != run_id:
                     errors.append("superseded_by target is missing reciprocal supersedes run_id")

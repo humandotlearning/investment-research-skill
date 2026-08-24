@@ -13,7 +13,7 @@ RUN = ROOT / "skills" / "investment-research-start" / "scripts" / "run.py"
 SEARCH = ROOT / "skills" / "investment-research-sourcing" / "scripts" / "search.py"
 RESEARCH = ROOT / "skills" / "investment-research-evidence" / "scripts" / "research.py"
 SOURCE_FIXTURES = ROOT / "tests" / "fixtures" / "sources"
-RUBRIC_FIXTURE = ROOT / "tests" / "fixtures" / "assignment-v2" / "rubric.json"
+RUBRIC_FIXTURE = ROOT / "tests" / "fixtures" / "flow-v2" / "rubric.json"
 
 
 def write_rubric(path, thesis_path):

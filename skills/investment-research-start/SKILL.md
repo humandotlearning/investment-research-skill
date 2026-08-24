@@ -11,7 +11,7 @@ Create and manage one evidence-bound research run. Keep the run directory as the
 ## Workflow
 
 1. Locate a working Python 3.10+ interpreter. Never install Python or repair aliases automatically.
-2. Run `scripts/run.py preflight`. Assignment runs use `recommended_provider: source_snapshots`. Use the Codex pipeline to gather source snapshots from Product Hunt and YC, with optional Hacker News enrichment, or provide equivalent local snapshots. Local Product Hunt/YC snapshots remain usable when network health is unavailable; Task 2 owns live multi-source fetch health. Treat Exa readiness as a legacy compatibility diagnostic, never the preferred assignment path. If Python is unavailable, record a failed stage and surface the preflight remediation.
+2. Run `scripts/run.py preflight`. Flow runs use `recommended_provider: source_snapshots`. Use the Codex pipeline to gather source snapshots from Product Hunt and YC, with optional Hacker News enrichment, or provide equivalent local snapshots. Local Product Hunt/YC snapshots remain usable when network health is unavailable; Task 2 owns live multi-source fetch health. Treat Exa readiness as a legacy compatibility diagnostic, never the preferred flow path. If Python is unavailable, record a failed stage and surface the preflight remediation.
 3. Prepare `input.json` and `thesis.md`, then run `scripts/run.py init`. Use the returned run only when it is new or resumable.
 4. Activate `investment-research-sourcing`, then `investment-research-evidence`, `investment-research-analysis`, and `investment-research-memo` in that order.
 5. Update each stage with `scripts/run.py stage`. Mark a stage completed only after its artifacts exist and validate.

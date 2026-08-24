@@ -11,17 +11,17 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "skills" / "investment-research-start" / "scripts" / "run.py"
-FIXTURE = ROOT / "tests" / "fixtures" / "assignment-v2"
+FIXTURE = ROOT / "tests" / "fixtures" / "flow-v2"
 
 
 def load_run():
-    spec = importlib.util.spec_from_file_location("assignment_v2_lifecycle_run", SCRIPT)
+    spec = importlib.util.spec_from_file_location("flow_v2_lifecycle_run", SCRIPT)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
-class AssignmentV2LifecycleTests(unittest.TestCase):
+class FlowV2LifecycleTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.run_module = load_run()
@@ -46,7 +46,7 @@ class AssignmentV2LifecycleTests(unittest.TestCase):
         rubric_path.write_text(json.dumps(rubric), encoding="utf-8")
         return input_path, thesis_path, rubric_path
 
-    def test_normalize_input_materializes_assignment_v2_defaults(self):
+    def test_normalize_input_materializes_flow_v2_defaults(self):
         normalized = self.run_module.normalize_input(
             {"seed": {"type": "topic", "value": "visual-memory agents"}}
         )
@@ -105,7 +105,7 @@ class AssignmentV2LifecycleTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "rubric"):
                         self.run_module.initialize_run(root / f"run-{label}", *sources)
 
-    def test_initialize_versions_files_and_resumes_only_exact_assignment(self):
+    def test_initialize_versions_files_and_resumes_only_exact_flow(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             sources = self.write_sources(root / "sources")
@@ -119,7 +119,7 @@ class AssignmentV2LifecycleTests(unittest.TestCase):
         self.assertTrue(second["resumed"])
         self.assertEqual(manifest["version"], 2)
         self.assertEqual(normalized["version"], 2)
-        self.assertEqual(manifest["assignment_fingerprint"], first["manifest"]["assignment_fingerprint"])
+        self.assertEqual(manifest["flow_fingerprint"], first["manifest"]["flow_fingerprint"])
         self.assertIsNone(manifest["supersedes_run_id"])
         self.assertIsNone(manifest["supersedes_run_path"])
         self.assertIsNone(manifest["superseded_by"])
@@ -263,7 +263,7 @@ class AssignmentV2LifecycleTests(unittest.TestCase):
             old_sources = self.write_sources(root / "old-sources")
             old_run = root / "old-run"
             self.run_module.initialize_run(old_run, *old_sources)
-            old_assignment_files = {
+            old_flow_files = {
                 name: (old_run / name).read_bytes()
                 for name in ("input.json", "thesis.md", "rubric.json")
             }
@@ -285,7 +285,7 @@ class AssignmentV2LifecycleTests(unittest.TestCase):
             self.assertEqual(old_manifest["superseded_by"]["run_id"], "new-run")
             self.assertEqual(old_manifest["superseded_by"]["path"], str(new_run.resolve()))
             self.assertEqual(
-                old_assignment_files,
+                old_flow_files,
                 {
                     name: (old_run / name).read_bytes()
                     for name in ("input.json", "thesis.md", "rubric.json")
@@ -398,7 +398,7 @@ class AssignmentV2LifecycleTests(unittest.TestCase):
                     if mutation == "wrong_run_id":
                         old_manifest["run_id"] = "wrong-old-run"
                     elif mutation == "wrong_fingerprint":
-                        old_manifest["assignment_fingerprint"] = "0" * 64
+                        old_manifest["flow_fingerprint"] = "0" * 64
                     else:
                         old_manifest["superseded_by"] = None
                     old_manifest_path.write_text(
@@ -415,7 +415,7 @@ class AssignmentV2LifecycleTests(unittest.TestCase):
                         for phrase in (
                             "linked target",
                             "target run_id",
-                            "target assignment fingerprint",
+                            "target flow fingerprint",
                             "reciprocal",
                         )
                     ),
@@ -428,7 +428,7 @@ class AssignmentV2LifecycleTests(unittest.TestCase):
             old_sources = self.write_sources(root / "old-sources")
             old_run = root / "old-run"
             self.run_module.initialize_run(old_run, *old_sources)
-            old_assignment = {
+            old_flow = {
                 name: (old_run / name).read_bytes()
                 for name in ("input.json", "thesis.md", "rubric.json")
             }
@@ -459,13 +459,13 @@ class AssignmentV2LifecycleTests(unittest.TestCase):
                         old_run, new_run, *new_sources
                     )
 
-            marker_path = new_run / ".assignment-v2-init.json"
+            marker_path = new_run / ".flow-v2-init.json"
             marker = json.loads(marker_path.read_text(encoding="utf-8"))
             self.assertFalse((new_run / "manifest.json").exists())
             self.assertEqual(marker["supersedes_run_id"], "old-run")
             self.assertEqual(marker["supersedes_run_path"], str(old_run.resolve()))
             self.assertEqual(
-                old_assignment,
+                old_flow,
                 {
                     name: (old_run / name).read_bytes()
                     for name in ("input.json", "thesis.md", "rubric.json")
@@ -477,7 +477,7 @@ class AssignmentV2LifecycleTests(unittest.TestCase):
             self.assertFalse(marker_path.exists())
             self.assertTrue((new_run / "manifest.json").exists())
             self.assertEqual(
-                old_assignment,
+                old_flow,
                 {
                     name: (old_run / name).read_bytes()
                     for name in ("input.json", "thesis.md", "rubric.json")
@@ -500,9 +500,9 @@ class AssignmentV2LifecycleTests(unittest.TestCase):
             ):
                 with self.assertRaises(self.run_module.ArtifactWriteError):
                     self.run_module.initialize_run(run_dir, *sources)
-            marker_path = run_dir / ".assignment-v2-init.json"
+            marker_path = run_dir / ".flow-v2-init.json"
             marker = json.loads(marker_path.read_text(encoding="utf-8"))
-            marker["assignment_fingerprint"] = "0" * 64
+            marker["flow_fingerprint"] = "0" * 64
             marker_path.write_text(json.dumps(marker), encoding="utf-8")
 
             with self.assertRaisesRegex(ValueError, "initialization marker"):

@@ -51,17 +51,17 @@ SCORE_COVERAGE = {
 COMPANY_CLAIM_CAPPED_CATEGORIES = {"Team", "Market", "Traction"}
 
 
-def _load_assignment_v2_module():
-    module_path = Path(__file__).with_name("assignment_v2.py")
-    spec = importlib.util.spec_from_file_location("investment_assignment_v2", module_path)
+def _load_flow_v2_module():
+    module_path = Path(__file__).with_name("flow_v2.py")
+    spec = importlib.util.spec_from_file_location("investment_flow_v2", module_path)
     if spec is None or spec.loader is None:
-        raise RuntimeError(f"unable to load assignment-v2 lifecycle module: {module_path}")
+        raise RuntimeError(f"unable to load flow-v2 lifecycle module: {module_path}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
-ASSIGNMENT_V2 = _load_assignment_v2_module()
+FLOW_V2 = _load_flow_v2_module()
 
 
 class ArtifactWriteError(OSError):
@@ -476,7 +476,7 @@ def _validate_origin_list(
     return valid
 
 
-def _validate_assignment_candidate(
+def _validate_flow_candidate(
     candidate: object,
     index: int,
     errors: list[str],
@@ -586,7 +586,7 @@ def _validate_assignment_candidate(
     return candidate
 
 
-def _validate_assignment_sourcing(
+def _validate_flow_sourcing(
     sourcing: object,
     errors: list[str],
     retrieval: object = None,
@@ -622,7 +622,7 @@ def _validate_assignment_sourcing(
             if canonicalize_url(result.get("url")) is None:
                 errors.append(f"{result_label} requires a valid absolute URL")
     for index, value in enumerate(candidates_value):
-        candidate = _validate_assignment_candidate(
+        candidate = _validate_flow_candidate(
             value, index, errors, retrieval_results
         )
         if candidate is None:
@@ -800,11 +800,11 @@ def read_json(path: str | Path):
 
 
 def normalize_input(value: dict) -> dict:
-    return ASSIGNMENT_V2.normalize_input(value)
+    return FLOW_V2.normalize_input(value)
 
 
 def _fingerprint(input_data: dict, thesis: str) -> str:
-    return ASSIGNMENT_V2.input_fingerprint(input_data, thesis)
+    return FLOW_V2.input_fingerprint(input_data, thesis)
 
 
 def _stage_record() -> dict:
@@ -819,30 +819,30 @@ def _stage_record() -> dict:
     }
 
 
-def _load_assignment_sources(
+def _load_flow_sources(
     input_path: str | Path,
     thesis_path: str | Path,
     rubric_path: str | Path | None,
 ) -> tuple[dict, str, dict]:
     if rubric_path is None:
-        raise ValueError("rubric.json is required to initialize an assignment-v2 run")
+        raise ValueError("rubric.json is required to initialize an flow-v2 run")
     input_data = normalize_input(read_json(input_path))
     thesis = Path(thesis_path).read_text(encoding="utf-8")
     if not thesis.strip():
         raise ValueError("thesis.md must not be empty")
     rubric = read_json(rubric_path)
-    ASSIGNMENT_V2.validate_rubric(rubric, thesis)
+    FLOW_V2.validate_rubric(rubric, thesis)
     return input_data, thesis, rubric
 
 
-def _stored_v2_assignment(
+def _stored_v2_flow(
     run_dir: Path,
     manifest: dict,
     *,
     require_active: bool = False,
     validate_links: bool = True,
 ) -> tuple[dict, str, dict, str]:
-    errors = ASSIGNMENT_V2.validate_stored_assignment(
+    errors = FLOW_V2.validate_stored_flow(
         run_dir, manifest, validate_links=validate_links
     )
     if errors:
@@ -855,10 +855,10 @@ def _stored_v2_assignment(
         if not thesis.strip():
             raise ValueError("thesis.md must not be empty")
         rubric = read_json(run_dir / "rubric.json")
-        ASSIGNMENT_V2.validate_rubric(rubric, thesis)
+        FLOW_V2.validate_rubric(rubric, thesis)
     except (OSError, json.JSONDecodeError, ValueError) as error:
-        raise ValueError(f"stored run assignment is invalid: {error}") from error
-    fingerprint = ASSIGNMENT_V2.assignment_fingerprint(input_data, thesis, rubric)
+        raise ValueError(f"stored run flow is invalid: {error}") from error
+    fingerprint = FLOW_V2.flow_fingerprint(input_data, thesis, rubric)
     return input_data, thesis, rubric, fingerprint
 
 
@@ -866,7 +866,7 @@ def _initialization_marker(
     run_dir: Path,
     fingerprint: str,
     rubric_fingerprint: str,
-    assignment_fingerprint: str,
+    flow_fingerprint: str,
     supersedes_run_id: str | None,
     supersedes_run_path: str | None,
 ) -> dict:
@@ -875,14 +875,14 @@ def _initialization_marker(
         "run_id": run_dir.name,
         "input_fingerprint": fingerprint,
         "rubric_fingerprint": rubric_fingerprint,
-        "assignment_fingerprint": assignment_fingerprint,
+        "flow_fingerprint": flow_fingerprint,
         "supersedes_run_id": supersedes_run_id,
         "supersedes_run_path": supersedes_run_path,
     }
 
 
 def _validate_initialization_destination(run_dir: Path, expected_marker: dict) -> Path:
-    marker_path = run_dir / ASSIGNMENT_V2.INITIALIZATION_MARKER
+    marker_path = run_dir / FLOW_V2.INITIALIZATION_MARKER
     if not run_dir.exists() or not any(run_dir.iterdir()):
         run_dir.mkdir(parents=True, exist_ok=True)
         atomic_write_json(marker_path, expected_marker)
@@ -894,9 +894,9 @@ def _validate_initialization_destination(run_dir: Path, expected_marker: dict) -
     except (OSError, json.JSONDecodeError) as error:
         raise ValueError(f"initialization marker is invalid: {error}") from error
     if marker != expected_marker:
-        raise ValueError("initialization marker does not match the requested assignment")
+        raise ValueError("initialization marker does not match the requested flow")
     allowed = {
-        ASSIGNMENT_V2.INITIALIZATION_MARKER,
+        FLOW_V2.INITIALIZATION_MARKER,
         "input.json",
         "thesis.md",
         "rubric.json",
@@ -929,12 +929,12 @@ def initialize_run(
     if (_supersedes_run_id is None) != (_supersedes_run_path is None):
         raise ValueError("superseding initialization requires both run id and path")
     run_dir = Path(run_dir)
-    input_data, thesis, rubric = _load_assignment_sources(
+    input_data, thesis, rubric = _load_flow_sources(
         input_path, thesis_path, rubric_path
     )
     fingerprint = _fingerprint(input_data, thesis)
-    rubric_fingerprint = ASSIGNMENT_V2.rubric_fingerprint(rubric)
-    assignment_fingerprint = ASSIGNMENT_V2.assignment_fingerprint(
+    rubric_fingerprint = FLOW_V2.rubric_fingerprint(rubric)
+    flow_fingerprint = FLOW_V2.flow_fingerprint(
         input_data, thesis, rubric
     )
     manifest_path = run_dir / "manifest.json"
@@ -942,11 +942,11 @@ def initialize_run(
         run_dir,
         fingerprint,
         rubric_fingerprint,
-        assignment_fingerprint,
+        flow_fingerprint,
         _supersedes_run_id,
         _supersedes_run_path,
     )
-    marker_path = run_dir / ASSIGNMENT_V2.INITIALIZATION_MARKER
+    marker_path = run_dir / FLOW_V2.INITIALIZATION_MARKER
     if manifest_path.exists():
         if marker_path.exists():
             try:
@@ -956,14 +956,14 @@ def initialize_run(
             if marker != expected_marker:
                 raise ValueError("initialization marker does not match the durable manifest")
         manifest = read_json(manifest_path)
-        stored_input, stored_thesis, _, stored_assignment_fingerprint = (
-            _stored_v2_assignment(run_dir, manifest, require_active=True)
+        stored_input, stored_thesis, _, stored_flow_fingerprint = (
+            _stored_v2_flow(run_dir, manifest, require_active=True)
         )
         if manifest.get("input_fingerprint") != _fingerprint(stored_input, stored_thesis):
             raise ValueError("stored run fingerprint does not match input.json and thesis.md")
-        if stored_assignment_fingerprint != assignment_fingerprint:
+        if stored_flow_fingerprint != flow_fingerprint:
             raise ValueError(
-                "existing run assignment does not match; create a linked run with supersede"
+                "existing run flow does not match; create a linked run with supersede"
             )
         if manifest.get("validation", {}).get("status") == "completed":
             raise ValueError("existing run is already completed")
@@ -982,7 +982,7 @@ def initialize_run(
         "updated_at": now,
         "input_fingerprint": fingerprint,
         "rubric_fingerprint": rubric_fingerprint,
-        "assignment_fingerprint": assignment_fingerprint,
+        "flow_fingerprint": flow_fingerprint,
         "supersedes_run_id": _supersedes_run_id,
         "supersedes_run_path": _supersedes_run_path,
         "superseded_by": None,
@@ -1005,24 +1005,24 @@ def supersede_run(
     thesis_path: str | Path,
     rubric_path: str | Path,
 ) -> dict:
-    """Create a distinct assignment-v2 run and link both manifests safely."""
+    """Create a distinct flow-v2 run and link both manifests safely."""
     old_dir = Path(supersedes_run_dir).resolve()
     new_dir = Path(run_dir).resolve()
     if old_dir == new_dir or old_dir in new_dir.parents:
         raise ValueError("superseding run must use a separate directory outside the old run")
     old_manifest_path = old_dir / "manifest.json"
     old_manifest = read_json(old_manifest_path)
-    _, _, _, old_fingerprint = _stored_v2_assignment(old_dir, old_manifest)
-    input_data, thesis, rubric = _load_assignment_sources(
+    _, _, _, old_fingerprint = _stored_v2_flow(old_dir, old_manifest)
+    input_data, thesis, rubric = _load_flow_sources(
         input_path, thesis_path, rubric_path
     )
-    new_fingerprint = ASSIGNMENT_V2.assignment_fingerprint(input_data, thesis, rubric)
+    new_fingerprint = FLOW_V2.flow_fingerprint(input_data, thesis, rubric)
     if new_fingerprint == old_fingerprint:
         raise ValueError("superseding run must change input, thesis, or rubric")
     expected_backlink = {
         "run_id": new_dir.name,
         "path": str(new_dir),
-        "assignment_fingerprint": new_fingerprint,
+        "flow_fingerprint": new_fingerprint,
     }
     old_link = old_manifest.get("superseded_by")
     if old_link is not None and any(
@@ -1032,12 +1032,12 @@ def supersede_run(
 
     new_manifest_path = new_dir / "manifest.json"
     if new_manifest_path.is_file():
-        marker_path = new_dir / ASSIGNMENT_V2.INITIALIZATION_MARKER
+        marker_path = new_dir / FLOW_V2.INITIALIZATION_MARKER
         if marker_path.exists():
             expected_marker = _initialization_marker(
                 new_dir,
                 _fingerprint(input_data, thesis),
-                ASSIGNMENT_V2.rubric_fingerprint(rubric),
+                FLOW_V2.rubric_fingerprint(rubric),
                 new_fingerprint,
                 old_manifest["run_id"],
                 str(old_dir),
@@ -1049,7 +1049,7 @@ def supersede_run(
             if marker != expected_marker:
                 raise ValueError("initialization marker conflicts with destination manifest")
         new_manifest = read_json(new_manifest_path)
-        _, _, _, stored_new_fingerprint = _stored_v2_assignment(
+        _, _, _, stored_new_fingerprint = _stored_v2_flow(
             new_dir, new_manifest, require_active=True, validate_links=False
         )
         if (
@@ -1155,13 +1155,13 @@ def _validate_completion_contract(
                 else:
                     if candidates.get("requested_count") != expected_count:
                         errors.append(
-                            "sourcing requested_count does not match the assignment target_count"
+                            "sourcing requested_count does not match the flow target_count"
                         )
                 if not 10 <= len(retained) <= 20:
                     errors.append(
                         f"completed sourcing requires 10 through 20 retained candidates; found {len(retained)}"
                     )
-                _validate_assignment_sourcing(candidates, errors, retrieval)
+                _validate_flow_sourcing(candidates, errors, retrieval)
             if candidates.get("provider") != retrieval.get("provider"):
                 errors.append("sourcing provider does not match retrieval artifact")
             if candidates.get("query") != retrieval.get("query"):
@@ -1332,7 +1332,7 @@ def update_stage(
     manifest = read_json(manifest_path)
     if not isinstance(manifest, dict) or manifest.get("version") != 2:
         raise ValueError("manifest.version must be 2 for stage updates")
-    _stored_v2_assignment(run_dir, manifest, require_active=True)
+    _stored_v2_flow(run_dir, manifest, require_active=True)
     if company:
         if stage in {"sourcing", "validation"}:
             raise ValueError(f"{stage} is a run-level stage")
@@ -1525,7 +1525,7 @@ def _rubric_weights(run_dir: Path, errors: list[str]) -> dict[str, int]:
             errors.append(f"duplicate rubric category: {name}")
         weights[name] = weight
     if tuple(weights) != SCORE_LABELS:
-        errors.append("analysis rubric must use the exact five assignment categories in order")
+        errors.append("analysis rubric must use the exact five flow categories in order")
         return {label: 20 for label in SCORE_LABELS}
     if sum(weights.values()) != 100:
         errors.append("analysis rubric weights must total 100")
@@ -1855,7 +1855,7 @@ def _validate_new(run_dir: Path) -> dict:
             and sourcing_retrieval.get("status") != "ok"
         ):
             errors.append("completed sourcing requires a successful retrieval artifact")
-    candidates, excluded = _validate_assignment_sourcing(
+    candidates, excluded = _validate_flow_sourcing(
         sourcing, errors, sourcing_retrieval
     )
     if sourcing.get("actual_count") != len(candidates):
@@ -1878,7 +1878,7 @@ def _validate_new(run_dir: Path) -> dict:
     research_config = input_data.get("research", {}) if isinstance(input_data, dict) else {}
     if research_config != {"full_coverage": True}:
         errors.append(
-            "assignment-v2 research must contain only full_coverage=true and no limit"
+            "flow-v2 research must contain only full_coverage=true and no limit"
         )
     seen_names, seen_sites, seen_slugs, seen_priorities = set(), set(), set(), set()
     selected = []
@@ -2211,7 +2211,7 @@ def _validate_new(run_dir: Path) -> dict:
 def validate_run(run_dir: str | Path) -> dict:
     run_dir = Path(run_dir)
     manifest_path = run_dir / "manifest.json"
-    marker_path = run_dir / ASSIGNMENT_V2.INITIALIZATION_MARKER
+    marker_path = run_dir / FLOW_V2.INITIALIZATION_MARKER
     if manifest_path.exists():
         try:
             manifest = read_json(manifest_path)
@@ -2220,7 +2220,7 @@ def validate_run(run_dir: str | Path) -> dict:
         try:
             result = _validate_new(run_dir)
             lifecycle_errors = (
-                ASSIGNMENT_V2.validate_stored_assignment(run_dir, manifest)
+                FLOW_V2.validate_stored_flow(run_dir, manifest)
                 if isinstance(manifest, dict)
                 else []
             )

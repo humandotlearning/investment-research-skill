@@ -57,7 +57,7 @@ class PackageContractTests(unittest.TestCase):
         for phrase in ["claude code", "codex", "hermes", "openclaw", "exa", "web fallback"]:
             self.assertIn(phrase, readme)
 
-    def test_sourcing_skill_uses_snapshot_adapters_for_the_assignment_path(self):
+    def test_sourcing_skill_uses_snapshot_adapters_for_the_flow_path(self):
         text = (SKILLS / "investment-research-sourcing" / "SKILL.md").read_text(
             encoding="utf-8"
         ).lower()
@@ -96,7 +96,7 @@ class PackageContractTests(unittest.TestCase):
                 "skills/investment-research-evidence/scripts/research.py",
                 "skills/investment-research-sourcing/scripts/search.py",
                 "skills/investment-research-sourcing/scripts/sources.py",
-                "skills/investment-research-start/scripts/assignment_v2.py",
+                "skills/investment-research-start/scripts/flow_v2.py",
                 "skills/investment-research-start/scripts/run.py",
             ],
         )

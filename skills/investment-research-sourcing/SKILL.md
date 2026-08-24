@@ -1,14 +1,14 @@
 ---
 name: investment-research-sourcing
 description: Use when discovering, deduplicating, and triaging startup candidates for an initialized investment-research run.
-compatibility: Requires Python 3.10+; assignment snapshots work offline; legacy Exa or web fallback requires network access
+compatibility: Requires Python 3.10+; flow snapshots work offline; legacy Exa or web fallback requires network access
 ---
 
 # Source and triage candidates
 
 Read the run's `input.json` and `thesis.md`. Retain at most the requested count, never more than 20.
 
-## Assignment source path
+## Flow source path
 
 Run `scripts/search.py snapshots --input INPUT --thesis THESIS --product-hunt PRODUCT_HUNT_ATOM --yc YC_JSON --hacker-news HN_JSON --output CANDIDATES --retrieval-output RETRIEVAL`. Product Hunt and YC snapshots are required origin inputs. `--hacker-news` is optional enrichment and never creates an origin. This path reads local snapshots, requires no API key or network call, and atomically writes a current retrieval artifact plus normalized `candidates` and provenance-preserving `excluded` arrays.
 
@@ -16,7 +16,7 @@ Product Hunt and YC origin URLs must use their official domains. Candidate fresh
 
 ## Legacy Exa compatibility
 
-The legacy `scripts/search.py --input INPUT --thesis THESIS --output RETRIEVAL` form remains available for older runs. It writes the historical Exa envelope and may use native web fallback after provider failure. Do not use this legacy Exa path as the preferred assignment workflow.
+The legacy `scripts/search.py --input INPUT --thesis THESIS --output RETRIEVAL` form remains available for older runs. It writes the historical Exa envelope and may use native web fallback after provider failure. Do not use this legacy Exa path as the preferred flow workflow.
 
 ## Triage contract
 
@@ -30,4 +30,4 @@ Each retained candidate must include:
 
 Each exclusion states the reason and retains its origin provenance. The snapshot command deterministically creates candidate-specific `thesis_fit_reasons` from `input.json` and `thesis.md`.
 
-Use both atomically written artifacts as the assignment output, then mark sourcing complete with provider `source_snapshots`. Legacy Exa and web runs retain their historical provider compatibility.
+Use both atomically written artifacts as the flow output, then mark sourcing complete with provider `source_snapshots`. Legacy Exa and web runs retain their historical provider compatibility.

@@ -1,4 +1,4 @@
-"""Parse assignment-v2 source snapshots into deterministic candidate records."""
+"""Parse flow-v2 source snapshots into deterministic candidate records."""
 
 from __future__ import annotations
 

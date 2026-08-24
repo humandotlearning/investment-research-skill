@@ -7,7 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "skills" / "investment-research-start" / "scripts" / "run.py"
-RUBRIC_FIXTURE = ROOT / "tests" / "fixtures" / "assignment-v2" / "rubric.json"
+RUBRIC_FIXTURE = ROOT / "tests" / "fixtures" / "flow-v2" / "rubric.json"
 
 
 def load_run():

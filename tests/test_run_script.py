@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 RUN_SCRIPT = ROOT / "skills" / "investment-research-start" / "scripts" / "run.py"
-RUBRIC_FIXTURE = ROOT / "tests" / "fixtures" / "assignment-v2" / "rubric.json"
+RUBRIC_FIXTURE = ROOT / "tests" / "fixtures" / "flow-v2" / "rubric.json"
 
 
 def load_module():
@@ -102,7 +102,7 @@ class RunScriptTests(unittest.TestCase):
         self.assertEqual(result["recommended_provider"], "source_snapshots")
         self.assertEqual(result["status"], "ready")
 
-    def test_network_probe_uses_an_assignment_source_not_exa(self):
+    def test_network_probe_uses_an_flow_source_not_exa(self):
         request_value = object()
         with patch.object(
             self.run_module.urllib.request,
@@ -180,7 +180,7 @@ class RunScriptTests(unittest.TestCase):
             self.run_module.initialize_run(run_dir, source_input, source_thesis, source_rubric)
 
             (run_dir / "thesis.md").write_text("# Tampered\n", encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "rubric|stored run assignment"):
+            with self.assertRaisesRegex(ValueError, "rubric|stored run flow"):
                 self.run_module.initialize_run(run_dir, source_input, source_thesis, source_rubric)
 
             (run_dir / "thesis.md").write_text(
@@ -362,7 +362,7 @@ class RunScriptTests(unittest.TestCase):
                     run_dir, "research", "running", company="../../outside"
                 )
 
-    def test_stage_rejects_tampered_or_superseded_v2_assignment(self):
+    def test_stage_rejects_tampered_or_superseded_v2_flow(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source_input = root / "input.json"

@@ -8,22 +8,22 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 RUN_SCRIPT = ROOT / "skills" / "investment-research-start" / "scripts" / "run.py"
-RUBRIC_FIXTURE = ROOT / "tests" / "fixtures" / "assignment-v2" / "rubric.json"
+RUBRIC_FIXTURE = ROOT / "tests" / "fixtures" / "flow-v2" / "rubric.json"
 
 
 def load_run():
-    spec = importlib.util.spec_from_file_location("assignment_coverage_run", RUN_SCRIPT)
+    spec = importlib.util.spec_from_file_location("flow_coverage_run", RUN_SCRIPT)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
-class AssignmentEvidenceCoverageTests(unittest.TestCase):
+class FlowEvidenceCoverageTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.run_module = load_run()
 
-    def _write_assignment(self, root: Path):
+    def _write_flow(self, root: Path):
         input_path = root / "source-input.json"
         thesis_path = root / "source-thesis.md"
         rubric_path = root / "source-rubric.json"
@@ -138,7 +138,7 @@ class AssignmentEvidenceCoverageTests(unittest.TestCase):
 
     def make_complete_run(self, root: Path):
         run_dir = root / "run"
-        self.run_module.initialize_run(run_dir, *self._write_assignment(root))
+        self.run_module.initialize_run(run_dir, *self._write_flow(root))
         sourcing = self._write_sourcing(run_dir, 10)
         self.run_module.update_stage(
             run_dir,
@@ -265,10 +265,10 @@ class AssignmentEvidenceCoverageTests(unittest.TestCase):
         thesis = (run_dir / "thesis.md").read_text(encoding="utf-8")
         rubric = json.loads((run_dir / "rubric.json").read_text(encoding="utf-8"))
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        manifest["input_fingerprint"] = self.run_module.ASSIGNMENT_V2.input_fingerprint(
+        manifest["input_fingerprint"] = self.run_module.FLOW_V2.input_fingerprint(
             input_data, thesis
         )
-        manifest["assignment_fingerprint"] = self.run_module.ASSIGNMENT_V2.assignment_fingerprint(
+        manifest["flow_fingerprint"] = self.run_module.FLOW_V2.flow_fingerprint(
             input_data, thesis, rubric
         )
         manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
@@ -293,7 +293,7 @@ class AssignmentEvidenceCoverageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             run_dir = root / "run"
-            self.run_module.initialize_run(run_dir, *self._write_assignment(root))
+            self.run_module.initialize_run(run_dir, *self._write_flow(root))
             self._write_sourcing(run_dir, 3)
 
             with self.assertRaisesRegex(ValueError, "10.*20|fewer than 10"):
@@ -316,11 +316,11 @@ class AssignmentEvidenceCoverageTests(unittest.TestCase):
 
         self.assertEqual(manifest["stages"]["sourcing"]["status"], "partial")
 
-    def test_sourcing_completion_requires_assignment_target_count_contract(self):
+    def test_sourcing_completion_requires_flow_target_count_contract(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             run_dir = root / "run"
-            self.run_module.initialize_run(run_dir, *self._write_assignment(root))
+            self.run_module.initialize_run(run_dir, *self._write_flow(root))
             self._write_sourcing(run_dir, 10)
             path = run_dir / "sourcing" / "candidates.json"
             candidates = json.loads(path.read_text(encoding="utf-8"))
@@ -337,7 +337,7 @@ class AssignmentEvidenceCoverageTests(unittest.TestCase):
                     artifacts=["sourcing/retrieval.json", "sourcing/candidates.json"],
                 )
 
-    def test_assignment_rejects_partial_research_modes_at_normalization_and_init(self):
+    def test_flow_rejects_partial_research_modes_at_normalization_and_init(self):
         invalid_research = (
             {"full_coverage": False},
             {"full_coverage": None},
@@ -357,7 +357,7 @@ class AssignmentEvidenceCoverageTests(unittest.TestCase):
 
             with self.subTest(init_research=research), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
-                input_path, thesis_path, rubric_path = self._write_assignment(root)
+                input_path, thesis_path, rubric_path = self._write_flow(root)
                 input_data = json.loads(input_path.read_text(encoding="utf-8"))
                 input_data["research"] = research
                 input_path.write_text(json.dumps(input_data), encoding="utf-8")
@@ -588,7 +588,7 @@ class AssignmentEvidenceCoverageTests(unittest.TestCase):
             candidate = candidates["candidates"][0]
             origin = candidate["origins"][0]
             original = origin["canonical_url"]
-            tracked = original + "/?utm_source=assignment"
+            tracked = original + "/?utm_source=flow"
             origin["canonical_url"] = tracked
             candidate["source_urls"] = [
                 tracked if url == original else url for url in candidate["source_urls"]
