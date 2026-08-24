@@ -33,10 +33,21 @@ CONFIDENCES = {"high", "medium", "low"}
 SCORE_LABELS = (
     "Team",
     "Product differentiation",
-    "Market attractiveness",
+    "Market",
     "Traction",
     "Thesis alignment",
 )
+ORIGIN_HOSTS = {
+    "product_hunt": {"producthunt.com", "www.producthunt.com"},
+    "yc": {"ycombinator.com", "www.ycombinator.com"},
+}
+SCORE_COVERAGE = {
+    "Team": "team",
+    "Product differentiation": "product",
+    "Market": "market",
+    "Traction": "traction",
+}
+COMPANY_CLAIM_CAPPED_CATEGORIES = {"Team", "Market", "Traction"}
 
 
 def _load_assignment_v2_module():
@@ -193,6 +204,275 @@ def canonicalize_url(url: str | None) -> str | None:
         netloc = f"{host}:{port}"
     path = parsed.path.rstrip("/")
     return urlunsplit((scheme, netloc, path, parsed.query, ""))
+
+
+def _url_host(value: object) -> str | None:
+    canonical = canonicalize_url(value)
+    if not canonical:
+        return None
+    parsed = urlsplit(canonical)
+    return parsed.hostname.lower() if parsed.hostname else None
+
+
+def _canonical_domain(value: object) -> str | None:
+    host = _url_host(value)
+    return host.removeprefix("www.") if host else None
+
+
+def _normalized_company_name(value: object) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").casefold())
+
+
+def _is_official_hn_item(value: object) -> bool:
+    canonical = canonicalize_url(value)
+    if not canonical:
+        return False
+    parsed = urlsplit(canonical)
+    query = parsed.query.split("&") if parsed.query else []
+    return (
+        parsed.scheme == "https"
+        and parsed.hostname == "news.ycombinator.com"
+        and parsed.path == "/item"
+        and len(query) == 1
+        and re.fullmatch(r"id=\d+", query[0]) is not None
+    )
+
+
+def _origin_error(origin: object) -> str | None:
+    if not isinstance(origin, dict):
+        return "must be an object"
+    source = origin.get("source")
+    if source not in ORIGIN_HOSTS:
+        return "must identify Product Hunt or YC"
+    canonical = canonicalize_url(origin.get("canonical_url"))
+    parsed = urlsplit(canonical or "")
+    if parsed.scheme != "https" or parsed.hostname not in ORIGIN_HOSTS[source]:
+        return f"{source} URL must use its enforced source domain"
+    source_id = origin.get("source_id")
+    if not isinstance(source_id, str) or not source_id.strip():
+        return "requires a nonempty string source_id"
+    publication = origin.get("publication_or_batch_date")
+    if not isinstance(publication, str) or not publication.strip():
+        return "requires a nonempty string publication_or_batch_date"
+    return None
+
+
+def _allowed_signal_source(value: object, origins: list[dict], website: object) -> bool:
+    canonical = canonicalize_url(value)
+    if not canonical:
+        return False
+    if _is_official_hn_item(canonical):
+        return True
+    if _canonical_domain(canonical) == _canonical_domain(website):
+        return True
+    return canonical in {
+        canonicalize_url(origin.get("canonical_url"))
+        for origin in origins
+        if isinstance(origin, dict) and _origin_error(origin) is None
+    }
+
+
+def _allowed_claim_source(value: object, website: object) -> bool:
+    canonical = canonicalize_url(value)
+    if not canonical:
+        return False
+    host = _url_host(canonical)
+    if host in ORIGIN_HOSTS["product_hunt"] | ORIGIN_HOSTS["yc"]:
+        return True
+    if _is_official_hn_item(canonical):
+        return True
+    return _canonical_domain(canonical) == _canonical_domain(website)
+
+
+def _validate_origin_list(origins: object, errors: list[str], label: str) -> list[dict]:
+    if not isinstance(origins, list) or not origins:
+        errors.append(f"{label} requires at least one Product Hunt or YC origin")
+        return []
+    valid: list[dict] = []
+    seen = set()
+    for index, origin in enumerate(origins):
+        problem = _origin_error(origin)
+        if problem:
+            errors.append(f"{label} origin {index} {problem}")
+            continue
+        key = (
+            origin["source"],
+            canonicalize_url(origin["canonical_url"]),
+            str(origin["source_id"]),
+        )
+        if key in seen:
+            errors.append(f"{label} has duplicate origin provenance at index {index}")
+            continue
+        seen.add(key)
+        valid.append(origin)
+    return valid
+
+
+def _validate_assignment_candidate(
+    candidate: object,
+    index: int,
+    errors: list[str],
+) -> dict | None:
+    if not isinstance(candidate, dict):
+        errors.append(f"candidate[{index}] must be an object")
+        return None
+    name = str(candidate.get("name", "")).strip() or f"candidate[{index}]"
+    label = f"candidate {name}"
+    for field in ("name", "slug", "website", "one_line_description"):
+        if not str(candidate.get(field, "")).strip():
+            errors.append(f"{label} requires {field}")
+    slug = candidate.get("slug")
+    if not isinstance(slug, str) or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", slug):
+        errors.append(f"{label} has invalid slug: {slug}")
+    website = canonicalize_url(candidate.get("website"))
+    if not website or urlsplit(website).scheme not in {"http", "https"}:
+        errors.append(f"{label} requires a valid website URL")
+    origins = _validate_origin_list(candidate.get("origins"), errors, label)
+    if "team_signal" not in candidate:
+        errors.append(f"{label} requires nullable team_signal")
+    team_signal = candidate.get("team_signal")
+    if team_signal is not None:
+        if not isinstance(team_signal, dict) or not _allowed_signal_source(
+            team_signal.get("source_url") if isinstance(team_signal, dict) else None,
+            origins,
+            website,
+        ):
+            errors.append(f"{label} team_signal requires an allowed source URL")
+    signals = candidate.get("freshness_or_traction_signals")
+    if not isinstance(signals, list) or not signals:
+        errors.append(f"{label} requires at least one freshness_or_traction_signal")
+    else:
+        for signal_index, signal in enumerate(signals):
+            if (
+                not isinstance(signal, dict)
+                or signal.get("kind") not in {"freshness", "traction"}
+                or not _allowed_signal_source(
+                    signal.get("source_url") if isinstance(signal, dict) else None,
+                    origins,
+                    website,
+                )
+            ):
+                errors.append(
+                    f"{label} signal {signal_index} requires freshness/traction and an allowed source URL"
+                )
+    reasons = candidate.get("thesis_fit_reasons")
+    if not isinstance(reasons, list) or not reasons or not all(
+        isinstance(reason, str) and reason.strip() for reason in reasons
+    ):
+        errors.append(f"{label} requires nonempty thesis_fit_reasons")
+    rank = candidate.get("rank")
+    if isinstance(rank, bool) or not isinstance(rank, int) or rank != index + 1:
+        errors.append(f"{label} rank must be deterministic and equal {index + 1}")
+    return candidate
+
+
+def _validate_assignment_sourcing(sourcing: object, errors: list[str]) -> tuple[list[dict], list[dict]]:
+    if not isinstance(sourcing, dict):
+        errors.append("candidates.json must be an object")
+        return [], []
+    candidates_value = sourcing.get("candidates")
+    excluded_value = sourcing.get("excluded")
+    if not isinstance(candidates_value, list) or not isinstance(excluded_value, list):
+        errors.append("candidates and excluded must be arrays")
+        return [], []
+    candidates: list[dict] = []
+    seen_names: dict[str, str] = {}
+    seen_domains: dict[str, str] = {}
+    for index, value in enumerate(candidates_value):
+        candidate = _validate_assignment_candidate(value, index, errors)
+        if candidate is None:
+            continue
+        candidates.append(candidate)
+        name = str(candidate.get("name", "")).strip()
+        normalized_name = _normalized_company_name(name)
+        domain = _canonical_domain(candidate.get("website"))
+        if normalized_name in seen_names:
+            errors.append(f"duplicate candidate name: {name} matches {seen_names[normalized_name]}")
+        else:
+            seen_names[normalized_name] = name
+        if domain in seen_domains:
+            errors.append(f"duplicate candidate domain: {name} matches {seen_domains[domain]} ({domain})")
+        elif domain:
+            seen_domains[domain] = name
+    excluded: list[dict] = []
+    for index, value in enumerate(excluded_value):
+        label = f"exclusion[{index}]"
+        if not isinstance(value, dict):
+            errors.append(f"{label} must be an object")
+            continue
+        name = str(value.get("name", "")).strip()
+        if not name or value.get("candidate_type") != "excluded" or not str(value.get("reason", "")).strip():
+            errors.append(f"{label} requires name, candidate_type excluded, and reason")
+        _validate_origin_list(value.get("origins"), errors, f"exclusion {name or index}")
+        excluded.append(value)
+    return candidates, excluded
+
+
+def _candidate_by_slug(run_dir: Path, slug: str, errors: list[str]) -> dict | None:
+    sourcing = _add_json_error(
+        run_dir / "sourcing" / "candidates.json", errors, "candidates"
+    )
+    if not isinstance(sourcing, dict) or not isinstance(sourcing.get("candidates"), list):
+        errors.append(f"unable to resolve retained candidate for company {slug}")
+        return None
+    matches = [
+        candidate
+        for candidate in sourcing["candidates"]
+        if isinstance(candidate, dict) and candidate.get("slug") == slug
+    ]
+    if len(matches) != 1:
+        errors.append(f"company {slug} must match exactly one retained candidate")
+        return None
+    return matches[0]
+
+
+def _validate_evidence_identity_and_sources(
+    evidence: object,
+    candidate: dict,
+    errors: list[str],
+) -> dict[str, dict]:
+    name = str(candidate.get("name") or candidate.get("slug") or "unknown")
+    if not isinstance(evidence, dict):
+        errors.append(f"evidence for {name} must be an object")
+        return {}
+    company = evidence.get("company")
+    expected_identity = (
+        str(candidate.get("name", "")).strip(),
+        str(candidate.get("slug", "")).strip(),
+        canonicalize_url(candidate.get("website")),
+    )
+    actual_identity = (
+        str(company.get("name", "")).strip() if isinstance(company, dict) else "",
+        str(company.get("slug", "")).strip() if isinstance(company, dict) else "",
+        canonicalize_url(company.get("website")) if isinstance(company, dict) else None,
+    )
+    if actual_identity != expected_identity:
+        errors.append(f"evidence company identity mismatch for {name}")
+    claims = evidence.get("claims")
+    if not isinstance(claims, list):
+        return {}
+    claim_ids: dict[str, dict] = {}
+    for index, claim in enumerate(claims):
+        if not isinstance(claim, dict):
+            continue
+        claim_id = claim.get("id")
+        if isinstance(claim_id, str) and claim_id.strip() and claim_id not in claim_ids:
+            claim_ids[claim_id] = claim
+        source_url = claim.get("source_url")
+        if claim.get("claim_type") != "unknown" and not _allowed_claim_source(
+            source_url, candidate.get("website")
+        ):
+            errors.append(
+                f"unsupported claim source for {name} at claim {claim_id or index}: {source_url}"
+            )
+        if (
+            claim.get("claim_type") == "company_claim"
+            and _canonical_domain(source_url) != _canonical_domain(candidate.get("website"))
+        ):
+            errors.append(
+                f"company claim must use the official company website for {name}: {claim_id or index}"
+            )
+    return claim_ids
 
 
 def _validate_json_text(text: str):
@@ -604,8 +884,25 @@ def _validate_completion_contract(
             excluded = candidates.get("excluded")
             if not isinstance(retained, list) or not isinstance(excluded, list):
                 errors.append("candidates and excluded must be arrays")
-            elif candidates.get("actual_count") != len(retained):
-                errors.append("actual_count does not match retained candidate count")
+            else:
+                if candidates.get("actual_count") != len(retained):
+                    errors.append("actual_count does not match retained candidate count")
+                try:
+                    expected_count = normalize_input(read_json(run_dir / "input.json"))[
+                        "sourcing"
+                    ]["target_count"]
+                except (KeyError, OSError, json.JSONDecodeError, TypeError, ValueError) as error:
+                    errors.append(f"unable to validate sourcing requested_count: {error}")
+                else:
+                    if candidates.get("requested_count") != expected_count:
+                        errors.append(
+                            "sourcing requested_count does not match the assignment target_count"
+                        )
+                if not 10 <= len(retained) <= 20:
+                    errors.append(
+                        f"completed sourcing requires 10 through 20 retained candidates; found {len(retained)}"
+                    )
+                _validate_assignment_sourcing(candidates, errors)
             if candidates.get("provider") != retrieval.get("provider"):
                 errors.append("sourcing provider does not match retrieval artifact")
             if candidates.get("query") != retrieval.get("query"):
@@ -622,6 +919,9 @@ def _validate_completion_contract(
             if not isinstance(evidence, dict):
                 errors.append("evidence.json must be an object")
             else:
+                candidate = _candidate_by_slug(run_dir, company, errors)
+                if candidate is not None:
+                    _validate_evidence_identity_and_sources(evidence, candidate, errors)
                 coverage = evidence.get("coverage")
                 if not isinstance(coverage, dict) or any(
                     coverage.get(category) not in {"present", "missing"}
@@ -697,14 +997,20 @@ def _validate_completion_contract(
         evidence = _add_json_error(
             run_dir / "companies" / company / "evidence.json", errors, "evidence"
         ) or {}
-        claim_ids = {
-            claim.get("id"): claim for claim in evidence.get("claims", [])
-            if isinstance(claim, dict) and claim.get("id")
-        }
+        candidate = _candidate_by_slug(run_dir, company, errors)
+        claim_ids = (
+            _validate_evidence_identity_and_sources(evidence, candidate, errors)
+            if candidate is not None else {}
+        )
+        used_claim_ids: set[str] = set()
         score, call = _parse_analysis(
             run_dir / "companies" / company / "analysis.md", errors, company, claim_ids,
             evidence.get("coverage", {}),
+            _rubric_weights(run_dir, errors),
+            used_claim_ids,
         )
+        for claim_id in sorted(set(claim_ids) - used_claim_ids):
+            errors.append(f"unused claim for {company}: {claim_id}")
         try:
             thresholds = read_json(run_dir / "input.json")["recommendation_thresholds"]
             if score is not None and call and call.lower() != _expected_call(score, thresholds).lower():
@@ -715,14 +1021,20 @@ def _validate_completion_contract(
         evidence = _add_json_error(
             run_dir / "companies" / company / "evidence.json", errors, "evidence"
         ) or {}
-        claim_ids = {
-            claim.get("id"): claim for claim in evidence.get("claims", [])
-            if isinstance(claim, dict) and claim.get("id")
-        }
+        candidate = _candidate_by_slug(run_dir, company, errors)
+        claim_ids = (
+            _validate_evidence_identity_and_sources(evidence, candidate, errors)
+            if candidate is not None else {}
+        )
+        used_claim_ids: set[str] = set()
         score, call = _parse_analysis(
             run_dir / "companies" / company / "analysis.md", errors, company, claim_ids,
             evidence.get("coverage", {}),
+            _rubric_weights(run_dir, errors),
+            used_claim_ids,
         )
+        for claim_id in sorted(set(claim_ids) - used_claim_ids):
+            errors.append(f"unused claim for {company}: {claim_id}")
         memo_score, memo_call = _parse_memo(
             run_dir / "companies" / company / "memo.md", errors, company
         )
@@ -774,6 +1086,20 @@ def update_stage(
     if stage == "research" and status == "running" and int(record.get("attempt_count", 0)) >= 2:
         raise ValueError("research permits one initial attempt and one retry")
     if status == "completed":
+        if company:
+            predecessor = {"research": "sourcing", "analysis": "research", "memo": "analysis"}.get(stage)
+            if predecessor == "sourcing":
+                predecessor_status = manifest.get("stages", {}).get("sourcing", {}).get("status")
+            elif predecessor:
+                predecessor_status = manifest.get("companies", {}).get(company, {}).get(
+                    predecessor, {}
+                ).get("status")
+            else:
+                predecessor_status = "completed"
+            if predecessor and predecessor_status != "completed":
+                raise ValueError(
+                    f"company {company} {stage} cannot complete until {predecessor} is completed"
+                )
         if not artifact_list:
             raise ValueError("completed stage requires at least one artifact")
         for relative in artifact_list:
@@ -912,19 +1238,52 @@ def _validate_manifest(run_dir: Path, manifest: dict, errors: list[str]) -> None
                 errors.append(f"manifest artifact is invalid for {label}: {error}")
 
 
+def _rubric_weights(run_dir: Path, errors: list[str]) -> dict[str, int]:
+    rubric = _add_json_error(run_dir / "rubric.json", errors, "rubric")
+    if not isinstance(rubric, dict):
+        return {label: 20 for label in SCORE_LABELS}
+    categories = rubric.get("categories")
+    if not isinstance(categories, list):
+        errors.append("rubric categories must be an array")
+        return {label: 20 for label in SCORE_LABELS}
+    weights: dict[str, int] = {}
+    for index, category in enumerate(categories):
+        if not isinstance(category, dict):
+            errors.append(f"rubric category {index} must be an object")
+            continue
+        name, weight = category.get("name"), category.get("weight")
+        if name not in SCORE_LABELS or isinstance(weight, bool) or not isinstance(weight, int):
+            errors.append(f"invalid rubric category or weight at index {index}")
+            continue
+        if name in weights:
+            errors.append(f"duplicate rubric category: {name}")
+        weights[name] = weight
+    if tuple(weights) != SCORE_LABELS:
+        errors.append("analysis rubric must use the exact five assignment categories in order")
+        return {label: 20 for label in SCORE_LABELS}
+    if sum(weights.values()) != 100:
+        errors.append("analysis rubric weights must total 100")
+    return weights
+
+
 def _parse_analysis(
     path: Path,
     errors: list[str],
     name: str,
     claim_ids: dict[str, dict],
     coverage: dict | None = None,
+    rubric_weights: dict[str, int] | None = None,
+    used_claim_ids: set[str] | None = None,
 ):
     if not path.exists():
         errors.append(f"missing analysis for {name}")
         return None, None
     text = path.read_text(encoding="utf-8")
+    if not re.search(r"^## Risks and open questions\s*$", text, re.MULTILINE):
+        errors.append(f"analysis for {name} requires exact heading: ## Risks and open questions")
+    weights = rubric_weights or {label: 20 for label in SCORE_LABELS}
     scores = []
-    for label in SCORE_LABELS:
+    for label, weight in weights.items():
         match = re.search(
             rf"^\|\s*{re.escape(label)}\s*\|\s*(\d+)\s*\|\s*([^|]+)\|",
             text,
@@ -937,8 +1296,8 @@ def _parse_analysis(
         refs = [part.strip() for part in match.group(2).split(",") if part.strip()]
         if not refs:
             errors.append(f"score row requires an evidence reference for {name}: {label}")
-        if not 0 <= score <= 20:
-            errors.append(f"score out of range for {name}: {label}={score}")
+        if not 0 <= score <= weight:
+            errors.append(f"score out of range for {name}: {label}={score}; weight={weight}")
         if refs and all(ref.lower().startswith("gap:") for ref in refs) and score != 0:
             errors.append(f"gap-only score row must receive zero for {name}: {label}")
         for ref in refs:
@@ -946,17 +1305,14 @@ def _parse_analysis(
                 claim_id = ref.split(":", 1)[1]
                 if claim_id not in claim_ids:
                     errors.append(f"unknown claim reference for {name}: {ref}")
+                elif used_claim_ids is not None:
+                    used_claim_ids.add(claim_id)
             elif ref.lower().startswith("gap:"):
                 if ref.split(":", 1)[1].lower() not in CATEGORIES:
                     errors.append(f"unknown gap reference for {name}: {ref}")
             else:
                 errors.append(f"invalid evidence reference for {name}: {ref}")
-        required_area = {
-            "Team": "team",
-            "Product differentiation": "product",
-            "Market attractiveness": "market",
-            "Traction": "traction",
-        }.get(label)
+        required_area = SCORE_COVERAGE.get(label)
         referenced_areas = {
             claim_ids.get(ref.split(":", 1)[1], {}).get("area")
             for ref in refs if ref.lower().startswith("claim:")
@@ -965,6 +1321,10 @@ def _parse_analysis(
             claim_ids.get(ref.split(":", 1)[1], {})
             for ref in refs if ref.lower().startswith("claim:")
         ]
+        category_claims = [
+            claim for claim in usable_claims
+            if required_area is None or claim.get("area") == required_area
+        ]
         if score > 0 and not any(
             claim and claim.get("claim_type") != "unknown" for claim in usable_claims
         ):
@@ -972,18 +1332,30 @@ def _parse_analysis(
         if score > 0 and required_area and required_area not in referenced_areas:
             errors.append(f"score row lacks {required_area} evidence for {name}: {label}")
         if (
-            score > 0
+            score != 0
             and required_area
             and isinstance(coverage, dict)
             and coverage.get(required_area) != "present"
         ):
-            errors.append(f"positive {required_area} score but {required_area} coverage is missing for {name}")
+            errors.append(
+                f"missing coverage must score zero for {name}: {label}={score} "
+                f"({required_area} coverage is missing)"
+            )
+        if (
+            score > 10
+            and label in COMPANY_CLAIM_CAPPED_CATEGORIES
+            and category_claims
+            and all(claim.get("claim_type") == "company_claim" for claim in category_claims)
+        ):
+            errors.append(
+                f"company-claim-only {label} score is capped at 10 for {name}: {score}"
+            )
         scores.append(score)
     final_match = re.search(r"\*\*Final score\*\*\s*\|\s*\*\*(\d+)\s*/\s*100\*\*", text, re.I)
     final_score = int(final_match.group(1)) if final_match else None
     if final_score is None:
         errors.append(f"missing final score for {name}")
-    elif len(scores) == len(SCORE_LABELS) and final_score != sum(scores):
+    elif len(scores) == len(weights) and final_score != sum(scores):
         errors.append(f"score arithmetic mismatch for {name}: {final_score} != {sum(scores)}")
     recommendation = None
     recommendation_match = re.search(
@@ -1076,6 +1448,7 @@ def _validate_new(run_dir: Path) -> dict:
     thesis_text = thesis_path.read_text(encoding="utf-8") if thesis_path.exists() else ""
     if not thesis_text.strip():
         errors.append("missing or empty thesis.md")
+    rubric_weights = _rubric_weights(run_dir, errors)
     manifest = _add_json_error(run_dir / "manifest.json", errors, "manifest") or {}
     _validate_manifest(run_dir, manifest, errors)
     if isinstance(input_data, dict) and thesis_text.strip():
@@ -1109,18 +1482,24 @@ def _validate_new(run_dir: Path) -> dict:
             and sourcing_retrieval.get("status") != "ok"
         ):
             errors.append("completed sourcing requires a successful retrieval artifact")
-    candidates = sourcing.get("candidates", [])
-    excluded = sourcing.get("excluded", [])
-    if not isinstance(candidates, list) or not isinstance(excluded, list):
-        errors.append("candidates and excluded must be arrays")
-        candidates, excluded = [], []
+    candidates, excluded = _validate_assignment_sourcing(sourcing, errors)
     if sourcing.get("actual_count") != len(candidates):
         errors.append("actual_count does not match retained candidate count")
     expected_requested = input_data.get("sourcing", {}).get("target_count") if isinstance(input_data, dict) else None
     if sourcing.get("requested_count") != expected_requested:
         errors.append("requested_count does not match input sourcing target")
-    if len(candidates) > 20:
-        errors.append("retained candidate count exceeds 20")
+    sourcing_status = manifest.get("stages", {}).get("sourcing", {}).get("status")
+    if not 10 <= len(candidates) <= 20:
+        if len(candidates) < 10:
+            errors.append(
+                f"fewer than 10 retained candidates must leave sourcing partial; found {len(candidates)}"
+            )
+        else:
+            errors.append("retained candidate count exceeds 20")
+        if sourcing_status == "completed":
+            errors.append("completed sourcing requires 10 through 20 retained candidates")
+        elif len(candidates) < 10 and sourcing_status != "partial":
+            errors.append("sourcing with fewer than 10 candidates must have partial manifest status")
     research_config = input_data.get("research", {}) if isinstance(input_data, dict) else {}
     research_limit = research_config.get("limit", 8)
     full_coverage = research_config.get("full_coverage", False)
@@ -1212,10 +1591,14 @@ def _validate_new(run_dir: Path) -> dict:
     ]
     summary_gaps: list[tuple[str, str]] = []
     summary_retries: list[str] = []
-    for candidate in selected:
+    coverage_candidates = candidates if full_coverage else selected
+    for candidate in coverage_candidates:
         name, slug = candidate["name"], candidate["slug"]
         company_dir = run_dir / "companies" / slug
         evidence = _add_json_error(company_dir / "evidence.json", errors, f"evidence for {name}") or {}
+        identity_claim_ids = _validate_evidence_identity_and_sources(
+            evidence, candidate, errors
+        )
         coverage = evidence.get("coverage", {}) if isinstance(evidence, dict) else {}
         if not isinstance(coverage, dict):
             errors.append(f"coverage for {name} must be an object")
@@ -1345,9 +1728,16 @@ def _validate_new(run_dir: Path) -> dict:
             if source_url and source_url not in retrieval_urls:
                 errors.append(f"claim source URL not present in retrieval for {name}: {source_url}")
 
+        if set(identity_claim_ids) != set(claim_ids):
+            errors.append(f"evidence claim identity mismatch for {name}")
+
+        used_claim_ids: set[str] = set()
         score, call = _parse_analysis(
-            company_dir / "analysis.md", errors, name, claim_ids, coverage
+            company_dir / "analysis.md", errors, name, claim_ids, coverage,
+            rubric_weights, used_claim_ids,
         )
+        for claim_id in sorted(set(claim_ids) - used_claim_ids):
+            errors.append(f"unused claim for {name}: {claim_id}")
         memo_score, memo_call = _parse_memo(company_dir / "memo.md", errors, name)
         if score is not None and call:
             expected_call = _expected_call(score, thresholds)
@@ -1368,8 +1758,18 @@ def _validate_new(run_dir: Path) -> dict:
         if isinstance(retrievals, list) and research_attempts != len(retrievals):
             errors.append(f"manifest research attempts do not match retrieval count for {name}")
         for stage in ("research", "analysis", "memo"):
-            if company_manifest.get(stage, {}).get("status") != "completed":
+            stage_record = company_manifest.get(stage, {})
+            if stage_record.get("status") != "completed":
                 errors.append(f"manifest stage not completed for {name}: {stage}")
+            expected_artifact = {
+                "research": f"companies/{slug}/evidence.json",
+                "analysis": f"companies/{slug}/analysis.md",
+                "memo": f"companies/{slug}/memo.md",
+            }[stage]
+            if expected_artifact not in stage_record.get("artifacts", []):
+                errors.append(
+                    f"manifest {stage} artifacts do not cover {name}: {expected_artifact}"
+                )
     if manifest.get("stages", {}).get("sourcing", {}).get("status") != "completed":
         errors.append("manifest sourcing stage is not completed")
     summary_path = run_dir / "run-summary.md"
@@ -1449,12 +1849,21 @@ def validate_run(run_dir: str | Path) -> dict:
             manifest = read_json(manifest_path)
         except (OSError, json.JSONDecodeError):
             manifest = None
-        result = _validate_new(run_dir)
-        lifecycle_errors = (
-            ASSIGNMENT_V2.validate_stored_assignment(run_dir, manifest)
-            if isinstance(manifest, dict)
-            else []
-        )
+        try:
+            result = _validate_new(run_dir)
+            lifecycle_errors = (
+                ASSIGNMENT_V2.validate_stored_assignment(run_dir, manifest)
+                if isinstance(manifest, dict)
+                else []
+            )
+        except (AttributeError, TypeError, ValueError, OSError, UnicodeError) as error:
+            return {
+                "valid": False,
+                "layout": "current",
+                "run_dir": str(run_dir),
+                "errors": [f"malformed current artifacts: {error}"],
+                "warnings": [],
+            }
         result["errors"] = lifecycle_errors + result["errors"]
         result["valid"] = not result["errors"]
         return result
@@ -1467,7 +1876,16 @@ def validate_run(run_dir: str | Path) -> dict:
     if isinstance(stored_input, dict) and stored_input.get("version") == 2:
         v2_intended = True
     if v2_intended:
-        return _validate_new(run_dir)
+        try:
+            return _validate_new(run_dir)
+        except (AttributeError, TypeError, ValueError, OSError, UnicodeError) as error:
+            return {
+                "valid": False,
+                "layout": "current",
+                "run_dir": str(run_dir),
+                "errors": [f"malformed current artifacts: {error}"],
+                "warnings": [],
+            }
 
     candidates_path = run_dir / "sourcing" / "candidates.json"
     try:

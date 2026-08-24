@@ -1,0 +1,525 @@
+import hashlib
+import importlib.util
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+RUN_SCRIPT = ROOT / "skills" / "investment-research-start" / "scripts" / "run.py"
+RUBRIC_FIXTURE = ROOT / "tests" / "fixtures" / "assignment-v2" / "rubric.json"
+
+
+def load_run():
+    spec = importlib.util.spec_from_file_location("assignment_coverage_run", RUN_SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class AssignmentEvidenceCoverageTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.run_module = load_run()
+
+    def _write_assignment(self, root: Path):
+        input_path = root / "source-input.json"
+        thesis_path = root / "source-thesis.md"
+        rubric_path = root / "source-rubric.json"
+        input_path.write_text(
+            json.dumps({"seed": {"type": "topic", "value": "AI workflow software"}}),
+            encoding="utf-8",
+        )
+        thesis = "# Thesis\nBack AI workflow software for investment teams.\n"
+        thesis_path.write_text(thesis, encoding="utf-8")
+        rubric = json.loads(RUBRIC_FIXTURE.read_text(encoding="utf-8"))
+        rubric["thesis_fingerprint"] = hashlib.sha256(thesis.encode("utf-8")).hexdigest()
+        for category in rubric["categories"]:
+            for anchor in category["anchors"]:
+                category["anchors"][anchor] += " AI workflow software."
+        rubric_path.write_text(json.dumps(rubric), encoding="utf-8")
+        return input_path, thesis_path, rubric_path
+
+    def _origin(self, index: int, source: str = "yc"):
+        if source == "product_hunt":
+            return {
+                "source": source,
+                "canonical_url": f"https://www.producthunt.com/posts/company-{index}",
+                "source_id": f"ph-{index}",
+                "publication_or_batch_date": "2026-08-20T00:00:00Z",
+            }
+        return {
+            "source": source,
+            "canonical_url": f"https://www.ycombinator.com/companies/company-{index}",
+            "source_id": f"yc-{index}",
+            "publication_or_batch_date": "S24",
+        }
+
+    def _candidate(self, index: int):
+        origins = [self._origin(index)]
+        if index == 1:
+            origins.append(self._origin(index, "product_hunt"))
+        return {
+            "name": f"Company {index}",
+            "slug": f"company-{index}",
+            "website": f"https://company{index}.example",
+            "one_line_description": f"Company {index} automates investment workflows.",
+            "origins": origins,
+            "team_signal": None,
+            "freshness_or_traction_signals": [
+                {
+                    "kind": "freshness",
+                    "source_url": origin["canonical_url"],
+                    "date": origin["publication_or_batch_date"],
+                }
+                for origin in origins
+            ],
+            "thesis_fit_reasons": ["Automates a workflow named in the thesis."],
+            "rank": index,
+            "description": f"Company {index} automates investment workflows.",
+            "candidate_type": "priority",
+            "fit_reasons": ["Automates a workflow named in the thesis."],
+            "research_priority": index,
+            "source_quality": "primary_record",
+            "source_urls": [origin["canonical_url"] for origin in origins],
+            "selected_for_research": True,
+        }
+
+    def _write_sourcing(self, run_dir: Path, count: int, excluded=None):
+        sourcing_dir = run_dir / "sourcing"
+        sourcing_dir.mkdir(parents=True, exist_ok=True)
+        candidates = [self._candidate(index) for index in range(1, count + 1)]
+        retrieval = {
+            "query": "Official Product Hunt and YC snapshots",
+            "provider": "source_snapshots",
+            "retrieved_at": "2026-08-23T00:00:00Z",
+            "status": "ok",
+            "exit_code": 0,
+            "results": [
+                {
+                    "title": candidate["name"],
+                    "url": origin["canonical_url"],
+                    "published_date": origin["publication_or_batch_date"],
+                    "highlights": [candidate["one_line_description"]],
+                }
+                for candidate in candidates
+                for origin in candidate["origins"]
+            ],
+        }
+        payload = {
+            "provider": "source_snapshots",
+            "query": retrieval["query"],
+            "retrieval_path": "sourcing/retrieval.json",
+            "requested_count": 10,
+            "actual_count": len(candidates),
+            "candidates": candidates,
+            "excluded": list(excluded or []),
+        }
+        (sourcing_dir / "retrieval.json").write_text(json.dumps(retrieval), encoding="utf-8")
+        (sourcing_dir / "candidates.json").write_text(json.dumps(payload), encoding="utf-8")
+        return payload
+
+    def _completed_record(self, artifacts, *, provider=None, exit_code=None):
+        return {
+            "status": "completed",
+            "attempt_count": 1,
+            "provider": provider,
+            "exit_code": exit_code,
+            "error": None,
+            "artifacts": artifacts,
+            "completed_at": "2026-08-23T00:00:00Z",
+        }
+
+    def make_complete_run(self, root: Path):
+        run_dir = root / "run"
+        self.run_module.initialize_run(run_dir, *self._write_assignment(root))
+        sourcing = self._write_sourcing(run_dir, 10)
+        self.run_module.update_stage(
+            run_dir,
+            "sourcing",
+            "completed",
+            provider="source_snapshots",
+            exit_code=0,
+            artifacts=["sourcing/retrieval.json", "sourcing/candidates.json"],
+        )
+        summary_rows = []
+        gap_rows = []
+        manifest_path = run_dir / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        for candidate in sourcing["candidates"]:
+            name, slug, website = candidate["name"], candidate["slug"], candidate["website"]
+            company_dir = run_dir / "companies" / slug
+            company_dir.mkdir(parents=True, exist_ok=True)
+            retrieval = {
+                "query": name,
+                "provider": "web",
+                "retrieved_at": "2026-08-23T00:00:00Z",
+                "status": "ok",
+                "exit_code": 0,
+                "results": [
+                    {
+                        "title": name,
+                        "url": website,
+                        "published_date": None,
+                        "highlights": ["Official company evidence."],
+                    }
+                ],
+            }
+            (company_dir / "retrieval-initial.json").write_text(
+                json.dumps(retrieval), encoding="utf-8"
+            )
+            claims = [
+                {
+                    "id": f"{area}-1",
+                    "area": area,
+                    "claim": f"{name} reports a {area} signal.",
+                    "claim_type": "company_claim",
+                    "source_url": website,
+                    "source_quality": "first_party",
+                    "confidence": "medium",
+                }
+                for area in ("team", "product", "market", "traction")
+            ]
+            evidence = {
+                "version": 2,
+                "company": {"name": name, "slug": slug, "website": website},
+                "coverage": {
+                    "team": "present",
+                    "product": "present",
+                    "market": "present",
+                    "traction": "present",
+                    "competitors": "missing",
+                    "freshness": "missing",
+                },
+                "missing_categories": ["competitors", "freshness"],
+                "retrievals": [
+                    {
+                        "artifact_path": f"companies/{slug}/retrieval-initial.json",
+                        "provider": "web",
+                        "query": name,
+                        "retrieved_at": "2026-08-23T00:00:00Z",
+                        "status": "ok",
+                        "exit_code": 0,
+                    }
+                ],
+                "claims": claims,
+                "unresolved_gaps": ["competitors", "freshness"],
+            }
+            (company_dir / "evidence.json").write_text(json.dumps(evidence), encoding="utf-8")
+            analysis = (
+                "## Scorecard\n"
+                "| Category | Score / 20 | Evidence refs | Reasoning |\n"
+                "| --- | ---: | --- | --- |\n"
+                "| Team | 10 | claim:team-1 | Evidence. |\n"
+                "| Product differentiation | 10 | claim:product-1 | Evidence. |\n"
+                "| Market | 10 | claim:market-1 | Evidence. |\n"
+                "| Traction | 10 | claim:traction-1 | Evidence. |\n"
+                "| Thesis alignment | 10 | claim:product-1, claim:market-1 | Evidence. |\n"
+                "| **Final score** | **50 / 100** | **Arithmetic total** | |\n\n"
+                "## Recommendation\nPass\n\n"
+                "## Risks and open questions\n- Company-reported evidence needs confirmation.\n"
+            )
+            (company_dir / "analysis.md").write_text(analysis, encoding="utf-8")
+            (company_dir / "memo.md").write_text(
+                "## Recommendation\n**Pass**\n\n## Score\n**50 / 100**\n",
+                encoding="utf-8",
+            )
+            manifest["companies"][slug] = {
+                "research": self._completed_record(
+                    [f"companies/{slug}/evidence.json"], provider="web", exit_code=0
+                ),
+                "analysis": self._completed_record([f"companies/{slug}/analysis.md"]),
+                "memo": self._completed_record([f"companies/{slug}/memo.md"]),
+            }
+            summary_rows.append(f"| {name} | 50 | Pass |")
+            gap_rows.append(f"{name}: competitors, freshness")
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        (run_dir / "run-summary.md").write_text(
+            "## Decisions\n| Company | Score | Recommendation |\n| --- | ---: | --- |\n"
+            + "\n".join(summary_rows)
+            + "\n\n## Skipped candidates\nNone.\n\n## Unresolved gaps\n"
+            + "\n".join(gap_rows)
+            + "\n\n## Retries\nNone.\n\n## Failures\nNone.\n",
+            encoding="utf-8",
+        )
+        return run_dir
+
+    def _validate_errors(self, run_dir: Path):
+        return "\n".join(self.run_module.validate_run(run_dir)["errors"]).lower()
+
+    def test_three_candidates_cannot_complete_sourcing_and_must_be_partial(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_dir = root / "run"
+            self.run_module.initialize_run(run_dir, *self._write_assignment(root))
+            self._write_sourcing(run_dir, 3)
+
+            with self.assertRaisesRegex(ValueError, "10.*20|fewer than 10"):
+                self.run_module.update_stage(
+                    run_dir,
+                    "sourcing",
+                    "completed",
+                    provider="source_snapshots",
+                    exit_code=0,
+                    artifacts=["sourcing/retrieval.json", "sourcing/candidates.json"],
+                )
+            manifest = self.run_module.update_stage(
+                run_dir,
+                "sourcing",
+                "partial",
+                provider="source_snapshots",
+                exit_code=0,
+                artifacts=["sourcing/retrieval.json", "sourcing/candidates.json"],
+            )
+
+        self.assertEqual(manifest["stages"]["sourcing"]["status"], "partial")
+
+    def test_sourcing_completion_requires_assignment_target_count_contract(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_dir = root / "run"
+            self.run_module.initialize_run(run_dir, *self._write_assignment(root))
+            self._write_sourcing(run_dir, 10)
+            path = run_dir / "sourcing" / "candidates.json"
+            candidates = json.loads(path.read_text(encoding="utf-8"))
+            candidates["requested_count"] = 12
+            path.write_text(json.dumps(candidates), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "requested_count"):
+                self.run_module.update_stage(
+                    run_dir,
+                    "sourcing",
+                    "completed",
+                    provider="source_snapshots",
+                    exit_code=0,
+                    artifacts=["sourcing/retrieval.json", "sourcing/candidates.json"],
+                )
+
+    def test_generic_company_page_and_hacker_news_cannot_be_origins(self):
+        mutations = (
+            ("web", "https://company1.example/about", "product hunt or yc"),
+            ("hacker_news", "https://news.ycombinator.com/item?id=1", "product hunt or yc"),
+        )
+        for source, url, phrase in mutations:
+            with self.subTest(source=source), tempfile.TemporaryDirectory() as directory:
+                run_dir = self.make_complete_run(Path(directory))
+                path = run_dir / "sourcing" / "candidates.json"
+                value = json.loads(path.read_text(encoding="utf-8"))
+                value["candidates"][0]["origins"] = [
+                    {
+                        "source": source,
+                        "canonical_url": url,
+                        "source_id": "invented",
+                        "publication_or_batch_date": "2026-08-20",
+                    }
+                ]
+                path.write_text(json.dumps(value), encoding="utf-8")
+
+                errors = self._validate_errors(run_dir)
+
+            self.assertIn(phrase, errors)
+
+    def test_exclusion_without_product_hunt_or_yc_provenance_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = self.make_complete_run(Path(directory))
+            path = run_dir / "sourcing" / "candidates.json"
+            value = json.loads(path.read_text(encoding="utf-8"))
+            value["excluded"] = [
+                {"name": "Invented Co", "candidate_type": "excluded", "reason": "No fit", "origins": []}
+            ]
+            path.write_text(json.dumps(value), encoding="utf-8")
+
+            errors = self._validate_errors(run_dir)
+
+        self.assertIn("exclusion", errors)
+        self.assertIn("origin", errors)
+
+    def test_malformed_origin_and_manifest_shapes_fail_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = self.make_complete_run(Path(directory))
+            candidates_path = run_dir / "sourcing" / "candidates.json"
+            candidates = json.loads(candidates_path.read_text(encoding="utf-8"))
+            candidates["candidates"][0]["origins"][0]["source_id"] = {"invented": True}
+            candidates_path.write_text(json.dumps(candidates), encoding="utf-8")
+
+            errors = self._validate_errors(run_dir)
+
+        self.assertIn("source_id", errors)
+
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = self.make_complete_run(Path(directory))
+            manifest_path = run_dir / "manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["companies"]["company-1"]["analysis"] = []
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            result = self.run_module.validate_run(run_dir)
+
+        self.assertFalse(result["valid"])
+        self.assertTrue(any("malformed current artifacts" in error for error in result["errors"]))
+
+    def test_missing_any_company_artifact_blocks_full_coverage_completion(self):
+        for artifact, stage in (
+            ("evidence.json", "research"),
+            ("analysis.md", "analysis"),
+            ("memo.md", "memo"),
+        ):
+            with self.subTest(artifact=artifact), tempfile.TemporaryDirectory() as directory:
+                run_dir = self.make_complete_run(Path(directory))
+                (run_dir / "companies" / "company-10" / artifact).unlink()
+
+                errors = self._validate_errors(run_dir)
+
+            self.assertIn("company 10", errors)
+            self.assertTrue("missing" in errors or "artifact" in errors)
+            self.assertIn(stage, errors)
+
+    def test_downstream_company_stage_cannot_complete_before_predecessor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = self.make_complete_run(Path(directory))
+            manifest_path = run_dir / "manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["companies"]["company-1"]["research"] = self.run_module._stage_record()
+            manifest["companies"]["company-1"]["analysis"] = self.run_module._stage_record()
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "research.*completed"):
+                self.run_module.update_stage(
+                    run_dir,
+                    "analysis",
+                    "completed",
+                    company="company-1",
+                    artifacts=["companies/company-1/analysis.md"],
+                )
+
+    def test_unsupported_claim_fails_even_when_it_appears_in_retrieval(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = self.make_complete_run(Path(directory))
+            company_dir = run_dir / "companies" / "company-1"
+            retrieval_path = company_dir / "retrieval-initial.json"
+            retrieval = json.loads(retrieval_path.read_text(encoding="utf-8"))
+            retrieval["results"].append(
+                {"title": "Blog", "url": "https://generic.example/post", "published_date": None, "highlights": []}
+            )
+            retrieval_path.write_text(json.dumps(retrieval), encoding="utf-8")
+            evidence_path = company_dir / "evidence.json"
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            evidence["claims"][0]["source_url"] = "https://generic.example/post"
+            evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+
+            errors = self._validate_errors(run_dir)
+
+        self.assertIn("unsupported claim source", errors)
+        self.assertIn("company 1", errors)
+
+    def test_score_arithmetic_company_claim_cap_and_missing_coverage_are_enforced(self):
+        mutations = {
+            "arithmetic": ("**50 / 100**", "**51 / 100**", "score arithmetic mismatch"),
+            "company-cap": ("| Team | 10 |", "| Team | 11 |", "company-claim-only"),
+        }
+        for label, (old, new, phrase) in mutations.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
+                run_dir = self.make_complete_run(Path(directory))
+                path = run_dir / "companies" / "company-1" / "analysis.md"
+                path.write_text(path.read_text(encoding="utf-8").replace(old, new), encoding="utf-8")
+
+                errors = self._validate_errors(run_dir)
+
+            self.assertIn(phrase, errors)
+
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = self.make_complete_run(Path(directory))
+            evidence_path = run_dir / "companies" / "company-1" / "evidence.json"
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            next(claim for claim in evidence["claims"] if claim["id"] == "product-1")[
+                "claim_type"
+            ] = "verified_fact"
+            evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+            analysis_path = run_dir / "companies" / "company-1" / "analysis.md"
+            analysis = analysis_path.read_text(encoding="utf-8")
+            analysis = analysis.replace(
+                "| Team | 10 | claim:team-1 |",
+                "| Team | 11 | claim:team-1, claim:product-1 |",
+            ).replace("**50 / 100**", "**51 / 100**")
+            analysis_path.write_text(analysis, encoding="utf-8")
+
+            errors = self._validate_errors(run_dir)
+
+        self.assertIn("company-claim-only", errors)
+
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = self.make_complete_run(Path(directory))
+            evidence_path = run_dir / "companies" / "company-1" / "evidence.json"
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            evidence["coverage"]["team"] = "missing"
+            evidence["missing_categories"] = ["team", "competitors", "freshness"]
+            evidence["unresolved_gaps"] = ["team", "competitors", "freshness"]
+            evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+
+            errors = self._validate_errors(run_dir)
+
+        self.assertIn("missing coverage must score zero", errors)
+
+    def test_missing_exact_risks_heading_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = self.make_complete_run(Path(directory))
+            path = run_dir / "companies" / "company-1" / "analysis.md"
+            path.write_text(
+                path.read_text(encoding="utf-8").replace(
+                    "## Risks and open questions", "## Risks & open questions"
+                ),
+                encoding="utf-8",
+            )
+
+            errors = self._validate_errors(run_dir)
+
+        self.assertIn("## risks and open questions", errors)
+
+    def test_unused_claim_and_company_identity_mismatch_fail(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = self.make_complete_run(Path(directory))
+            evidence_path = run_dir / "companies" / "company-1" / "evidence.json"
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            evidence["company"]["slug"] = "different-company"
+            evidence["claims"].append(
+                {
+                    "id": "unused-1",
+                    "area": "product",
+                    "claim": "Unused company claim.",
+                    "claim_type": "company_claim",
+                    "source_url": "https://company1.example",
+                    "source_quality": "first_party",
+                    "confidence": "low",
+                }
+            )
+            evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+
+            errors = self._validate_errors(run_dir)
+
+        self.assertIn("company identity", errors)
+        self.assertIn("unused claim", errors)
+
+    def test_canonical_domain_and_name_duplicates_fail_but_multiple_origins_pass(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = self.make_complete_run(Path(directory))
+            result = self.run_module.validate_run(run_dir)
+            self.assertTrue(result["valid"], result["errors"])
+            path = run_dir / "sourcing" / "candidates.json"
+            value = json.loads(path.read_text(encoding="utf-8"))
+            value["candidates"][1]["website"] = "https://www.company1.example/pricing"
+            path.write_text(json.dumps(value), encoding="utf-8")
+
+            errors = self._validate_errors(run_dir)
+
+        self.assertIn("duplicate candidate domain", errors)
+
+    def test_valid_full_coverage_fixture_passes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_module.validate_run(self.make_complete_run(Path(directory)))
+
+        self.assertTrue(result["valid"], result["errors"])
+
+
+if __name__ == "__main__":
+    unittest.main()

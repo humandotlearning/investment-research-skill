@@ -40,56 +40,99 @@ class NewRunValidationTests(unittest.TestCase):
         source_rubric = write_rubric(root / "rubric.json", source_thesis)
         run_dir = root / "run"
         self.run_module.initialize_run(run_dir, source_input, source_thesis, source_rubric)
-        sourcing, company = run_dir / "sourcing", run_dir / "companies" / "acme"
+        sourcing = run_dir / "sourcing"
         sourcing.mkdir(parents=True, exist_ok=True)
-        company.mkdir(parents=True, exist_ok=True)
-        retrieval = {"query":"Acme","provider":"exa","retrieved_at":"2026-08-23T00:00:00Z","status":"ok","exit_code":0,"results":[{"title":"Acme","url":"https://acme.example","published_date":None,"highlights":["signal"]}]}
+        candidate_specs = [("Acme", "acme", "https://acme.example")] + [
+            (f"Company {index}", f"company-{index}", f"https://company{index}.example")
+            for index in range(2, 11)
+        ]
+        candidates_list = []
+        retrieval_results = []
+        for rank, (name, slug, website) in enumerate(candidate_specs, start=1):
+            origin_url = f"https://www.ycombinator.com/companies/{slug}"
+            candidates_list.append({
+                "name": name,
+                "slug": slug,
+                "website": website,
+                "one_line_description": "Automation.",
+                "origins": [{
+                    "source": "yc",
+                    "canonical_url": origin_url,
+                    "source_id": f"yc-{rank}",
+                    "publication_or_batch_date": "S24",
+                }],
+                "team_signal": None,
+                "freshness_or_traction_signals": [{
+                    "kind": "freshness", "source_url": origin_url, "date": "S24",
+                }],
+                "thesis_fit_reasons": ["Recurring workflow fit."],
+                "rank": rank,
+                "description": "Automation.",
+                "source_urls": [origin_url],
+                "candidate_type": "priority",
+                "fit_reasons": ["Workflow"],
+                "research_priority": rank,
+                "source_quality": "primary_record",
+                "selected_for_research": True,
+            })
+            retrieval_results.append({
+                "title": name, "url": origin_url, "published_date": "S24", "highlights": ["signal"]
+            })
+        retrieval = {"query":"Acme","provider":"source_snapshots","retrieved_at":"2026-08-23T00:00:00Z","status":"ok","exit_code":0,"results":retrieval_results}
         (sourcing / "retrieval.json").write_text(json.dumps(retrieval), encoding="utf-8")
-        (company / "retrieval-initial.json").write_text(json.dumps(retrieval), encoding="utf-8")
-        candidate = {"name":"Acme","slug":"acme","website":"https://acme.example","description":"Automation.","team_signal":"Founders.","traction_signal":"Customer.","source_urls":["https://acme.example"],"candidate_type":"priority","fit_reasons":["Workflow"],"research_priority":1,"source_quality":"first_party","selected_for_research":True}
-        candidates = {"version":1,"provider":"exa","query":"Acme","retrieval_path":"sourcing/retrieval.json","requested_count":10,"actual_count":1,"candidates":[candidate],"excluded":[]}
+        candidates = {"version":2,"provider":"source_snapshots","query":"Acme","retrieval_path":"sourcing/retrieval.json","requested_count":10,"actual_count":10,"candidates":candidates_list,"excluded":[]}
         (sourcing / "candidates.json").write_text(json.dumps(candidates), encoding="utf-8")
-        areas = ["team", "product", "market", "traction", "freshness"]
-        evidence = {
-            "version": 1,
-            "company": {"name":"Acme","slug":"acme","website":"https://acme.example"},
-            "coverage": {"team":"present","product":"present","market":"present","traction":"present","competitors":"missing","freshness":"present"},
-            "missing_categories": ["competitors"],
-            "retrievals": [{"artifact_path":"companies/acme/retrieval-initial.json","provider":"exa","query":"Acme","retrieved_at":"2026-08-23T00:00:00Z","status":"ok","exit_code":0}],
-            "claims": [{"id":f"{area}-1","area":area,"claim":f"{area} signal","claim_type":"company_claim","source_url":"https://acme.example","source_quality":"first_party","confidence":"medium"} for area in areas],
-            "unresolved_gaps": ["competitors"],
-        }
-        (company / "evidence.json").write_text(json.dumps(evidence), encoding="utf-8")
-        rows = "\n".join([
-            "| Team | 10 | claim:team-1 | Evidence. |",
-            "| Product differentiation | 10 | claim:product-1 | Evidence. |",
-            "| Market attractiveness | 10 | claim:market-1 | Evidence. |",
-            "| Traction | 10 | claim:traction-1 | Evidence. |",
-            "| Thesis alignment | 10 | claim:product-1, claim:market-1 | Evidence. |",
-        ])
-        analysis = f"## Scorecard\n| Category | Score / 20 | Evidence refs | Reasoning |\n| --- | ---: | --- | --- |\n{rows}\n| **Final score** | **50 / 100** | **Arithmetic total** | |\n\n## Recommendation\nPass\n"
-        (company / "analysis.md").write_text(analysis, encoding="utf-8")
-        (company / "memo.md").write_text("## Recommendation\n**Pass**\n\n## Score\n**50 / 100**\n", encoding="utf-8")
+        summary_rows = []
+        gap_rows = []
+        for name, slug, website in candidate_specs:
+            company = run_dir / "companies" / slug
+            company.mkdir(parents=True, exist_ok=True)
+            company_retrieval = {"query":name,"provider":"web","retrieved_at":"2026-08-23T00:00:00Z","status":"ok","exit_code":0,"results":[{"title":name,"url":website,"published_date":None,"highlights":["signal"]}]}
+            (company / "retrieval-initial.json").write_text(json.dumps(company_retrieval), encoding="utf-8")
+            areas = ["team", "product", "market", "traction"]
+            evidence = {
+                "version": 2,
+                "company": {"name":name,"slug":slug,"website":website},
+                "coverage": {"team":"present","product":"present","market":"present","traction":"present","competitors":"missing","freshness":"missing"},
+                "missing_categories": ["competitors", "freshness"],
+                "retrievals": [{"artifact_path":f"companies/{slug}/retrieval-initial.json","provider":"web","query":name,"retrieved_at":"2026-08-23T00:00:00Z","status":"ok","exit_code":0}],
+                "claims": [{"id":f"{area}-1","area":area,"claim":f"{area} signal","claim_type":"company_claim","source_url":website,"source_quality":"first_party","confidence":"medium"} for area in areas],
+                "unresolved_gaps": ["competitors", "freshness"],
+            }
+            (company / "evidence.json").write_text(json.dumps(evidence), encoding="utf-8")
+            rows = "\n".join([
+                "| Team | 10 | claim:team-1 | Evidence. |",
+                "| Product differentiation | 10 | claim:product-1 | Evidence. |",
+                "| Market | 10 | claim:market-1 | Evidence. |",
+                "| Traction | 10 | claim:traction-1 | Evidence. |",
+                "| Thesis alignment | 10 | claim:product-1, claim:market-1 | Evidence. |",
+            ])
+            analysis = f"## Scorecard\n| Category | Score / 20 | Evidence refs | Reasoning |\n| --- | ---: | --- | --- |\n{rows}\n| **Final score** | **50 / 100** | **Arithmetic total** | |\n\n## Recommendation\nPass\n\n## Risks and open questions\n- Verify company claims.\n"
+            (company / "analysis.md").write_text(analysis, encoding="utf-8")
+            (company / "memo.md").write_text("## Recommendation\n**Pass**\n\n## Score\n**50 / 100**\n", encoding="utf-8")
+            summary_rows.append(f"| {name} | 50 | Pass |")
+            gap_rows.append(f"{name}: competitors, freshness")
         (run_dir / "run-summary.md").write_text(
             "## Decisions\n| Company | Score | Recommendation |\n| --- | ---: | --- |\n"
-            "| Acme | 50 | Pass |\n\n"
+            + "\n".join(summary_rows) + "\n\n"
             "## Skipped candidates\nNone.\n\n"
-            "## Unresolved gaps\nAcme: competitors\n\n"
+            "## Unresolved gaps\n" + "\n".join(gap_rows) + "\n\n"
             "## Retries\nNone.\n\n"
             "## Failures\nNone.\n",
             encoding="utf-8",
         )
-        self.run_module.update_stage(run_dir, "sourcing", "completed", provider="exa", exit_code=0, artifacts=["sourcing/retrieval.json", "sourcing/candidates.json"])
-        for stage, artifact in [("research","evidence.json"),("analysis","analysis.md"),("memo","memo.md")]:
-            self.run_module.update_stage(
-                run_dir,
-                stage,
-                "completed",
-                company="acme",
-                provider="exa" if stage == "research" else None,
-                exit_code=0 if stage == "research" else None,
-                artifacts=[f"companies/acme/{artifact}"],
-            )
+        self.run_module.update_stage(run_dir, "sourcing", "completed", provider="source_snapshots", exit_code=0, artifacts=["sourcing/retrieval.json", "sourcing/candidates.json"])
+        for _, slug, _ in candidate_specs:
+            for stage, artifact in [("research","evidence.json"),("analysis","analysis.md"),("memo","memo.md")]:
+                self.run_module.update_stage(
+                    run_dir,
+                    stage,
+                    "completed",
+                    company=slug,
+                    provider="web" if stage == "research" else None,
+                    exit_code=0 if stage == "research" else None,
+                    artifacts=[f"companies/{slug}/{artifact}"],
+                )
         return run_dir
 
     def test_complete_new_run_is_valid(self):

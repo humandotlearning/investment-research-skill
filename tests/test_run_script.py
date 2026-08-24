@@ -298,16 +298,25 @@ class RunScriptTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
+            with self.assertRaisesRegex(ValueError, "10 through 20"):
+                self.run_module.update_stage(
+                    run_dir,
+                    "sourcing",
+                    "completed",
+                    provider="web",
+                    exit_code=0,
+                    artifacts=["sourcing/retrieval.json", "sourcing/candidates.json"],
+                )
             manifest = self.run_module.update_stage(
                 run_dir,
                 "sourcing",
-                "completed",
+                "partial",
                 provider="web",
                 exit_code=0,
                 artifacts=["sourcing/retrieval.json", "sourcing/candidates.json"],
             )
 
-        self.assertEqual(manifest["stages"]["sourcing"]["status"], "completed")
+        self.assertEqual(manifest["stages"]["sourcing"]["status"], "partial")
         self.assertEqual(manifest["stages"]["sourcing"]["attempt_count"], 1)
 
     def test_research_stage_blocks_more_than_initial_attempt_and_one_retry(self):

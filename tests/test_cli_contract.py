@@ -103,12 +103,14 @@ class CliContractTests(unittest.TestCase):
             retrieval = json.loads(retrieval_output.read_text(encoding="utf-8"))
             staged = self.run_cli(
                 RUN, "stage", "--run-dir", run_dir, "--stage", "sourcing",
-                "--status", "completed", "--provider", "source_snapshots",
+                "--status", "partial", "--provider", "source_snapshots",
                 "--exit-code", "0", "--artifact", "sourcing/retrieval.json",
                 "--artifact", "sourcing/candidates.json", cwd=root,
             )
+            manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
 
         self.assertEqual(staged.returncode, 0, staged.stderr)
+        self.assertEqual(manifest["stages"]["sourcing"]["status"], "partial")
         self.assertEqual(payload["provider"], "source_snapshots")
         self.assertEqual(payload["provider"], retrieval["provider"])
         self.assertEqual(payload["query"], retrieval["query"])
@@ -235,12 +237,14 @@ class CliContractTests(unittest.TestCase):
 
             staged = self.run_cli(
                 RUN, "stage", "--run-dir", run_dir, "--stage", "sourcing",
-                "--status", "completed", "--provider", "source_snapshots",
+                "--status", "partial", "--provider", "source_snapshots",
                 "--exit-code", "0", "--artifact", "sourcing/retrieval.json",
                 "--artifact", "sourcing/candidates.json", cwd=root,
             )
+            manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
 
         self.assertEqual(staged.returncode, 0, staged.stderr)
+        self.assertEqual(manifest["stages"]["sourcing"]["status"], "partial")
 
     def test_research_rejects_empty_retry_with_code_two(self):
         with tempfile.TemporaryDirectory() as directory:
