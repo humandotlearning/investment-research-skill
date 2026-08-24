@@ -57,7 +57,7 @@ class PackageContractTests(unittest.TestCase):
         for phrase in ["claude code", "codex", "hermes", "openclaw", "exa", "web fallback"]:
             self.assertIn(phrase, readme)
 
-    def test_package_has_only_three_helpers_and_they_compile(self):
+    def test_package_has_only_four_helpers_and_they_compile(self):
         scripts = sorted(
             path.relative_to(ROOT).as_posix()
             for path in SKILLS.rglob("*.py")
@@ -67,6 +67,7 @@ class PackageContractTests(unittest.TestCase):
             [
                 "skills/investment-research-evidence/scripts/research.py",
                 "skills/investment-research-sourcing/scripts/search.py",
+                "skills/investment-research-sourcing/scripts/sources.py",
                 "skills/investment-research-start/scripts/run.py",
             ],
         )
