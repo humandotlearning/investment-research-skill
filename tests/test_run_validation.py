@@ -1,4 +1,5 @@
 import importlib.util
+import hashlib
 import json
 import tempfile
 import unittest
@@ -6,6 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "skills" / "investment-research-start" / "scripts" / "run.py"
+RUBRIC_FIXTURE = ROOT / "tests" / "fixtures" / "assignment-v2" / "rubric.json"
 
 
 def load_run():
@@ -13,6 +15,14 @@ def load_run():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def write_rubric(path, thesis_path):
+    rubric = json.loads(RUBRIC_FIXTURE.read_text(encoding="utf-8"))
+    thesis = thesis_path.read_text(encoding="utf-8")
+    rubric["thesis_fingerprint"] = hashlib.sha256(thesis.encode("utf-8")).hexdigest()
+    path.write_text(json.dumps(rubric), encoding="utf-8")
+    return path
 
 
 class NewRunValidationTests(unittest.TestCase):
@@ -24,8 +34,9 @@ class NewRunValidationTests(unittest.TestCase):
         source_input, source_thesis = root / "source.json", root / "source.md"
         source_input.write_text(json.dumps({"seed": {"type": "topic", "value": "AI"}}), encoding="utf-8")
         source_thesis.write_text("# Thesis\nRecurring work.\n", encoding="utf-8")
+        source_rubric = write_rubric(root / "rubric.json", source_thesis)
         run_dir = root / "run"
-        self.run_module.initialize_run(run_dir, source_input, source_thesis)
+        self.run_module.initialize_run(run_dir, source_input, source_thesis, source_rubric)
         sourcing, company = run_dir / "sourcing", run_dir / "companies" / "acme"
         sourcing.mkdir(parents=True, exist_ok=True)
         company.mkdir(parents=True, exist_ok=True)
@@ -33,7 +44,7 @@ class NewRunValidationTests(unittest.TestCase):
         (sourcing / "retrieval.json").write_text(json.dumps(retrieval), encoding="utf-8")
         (company / "retrieval-initial.json").write_text(json.dumps(retrieval), encoding="utf-8")
         candidate = {"name":"Acme","slug":"acme","website":"https://acme.example","description":"Automation.","team_signal":"Founders.","traction_signal":"Customer.","source_urls":["https://acme.example"],"candidate_type":"priority","fit_reasons":["Workflow"],"research_priority":1,"source_quality":"first_party","selected_for_research":True}
-        candidates = {"version":1,"provider":"exa","query":"Acme","retrieval_path":"sourcing/retrieval.json","requested_count":15,"actual_count":1,"candidates":[candidate],"excluded":[]}
+        candidates = {"version":1,"provider":"exa","query":"Acme","retrieval_path":"sourcing/retrieval.json","requested_count":10,"actual_count":1,"candidates":[candidate],"excluded":[]}
         (sourcing / "candidates.json").write_text(json.dumps(candidates), encoding="utf-8")
         areas = ["team", "product", "market", "traction", "freshness"]
         evidence = {
@@ -150,7 +161,7 @@ class NewRunValidationTests(unittest.TestCase):
             result = self.run_module.validate_run(run_dir)
 
         self.assertTrue(any("missing run-summary" in error for error in result["errors"]))
-        self.assertTrue(any("top priority" in error for error in result["errors"]))
+        self.assertTrue(any("full coverage" in error for error in result["errors"]))
 
     def test_score_row_requires_an_evidence_or_gap_reference(self):
         with tempfile.TemporaryDirectory() as directory:

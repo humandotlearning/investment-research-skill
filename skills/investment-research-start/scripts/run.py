@@ -40,6 +40,19 @@ SCORE_LABELS = (
 )
 
 
+def _load_assignment_v2_module():
+    module_path = Path(__file__).with_name("assignment_v2.py")
+    spec = importlib.util.spec_from_file_location("investment_assignment_v2", module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"unable to load assignment-v2 lifecycle module: {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+ASSIGNMENT_V2 = _load_assignment_v2_module()
+
+
 class ArtifactWriteError(OSError):
     """Raised when an artifact cannot be serialized or written atomically."""
 
@@ -251,51 +264,7 @@ def read_json(path: str | Path):
 
 
 def normalize_input(value: dict) -> dict:
-    if not isinstance(value, dict):
-        raise ValueError("input must be a JSON object")
-    seed = value.get("seed")
-    if not isinstance(seed, dict) or seed.get("type") not in {"topic", "urls", "feed"}:
-        raise ValueError("seed.type must be topic, urls, or feed")
-    seed_value = seed.get("value")
-    if seed["type"] == "urls":
-        if not isinstance(seed_value, list) or not seed_value or not all(
-            isinstance(item, str) and item.strip() for item in seed_value
-        ):
-            raise ValueError("seed.value must be a non-empty URL list")
-    elif not isinstance(seed_value, str) or not seed_value.strip():
-        raise ValueError("seed.value must be non-empty")
-
-    sourcing = value.get("sourcing", {})
-    research = value.get("research", {})
-    thresholds = value.get("recommendation_thresholds", {})
-    target_count = sourcing.get("target_count", 15)
-    research_limit = research.get("limit", 8)
-    full_coverage = research.get("full_coverage", False)
-    watch_min = thresholds.get("watch_min", 65)
-    meeting_min = thresholds.get("meeting_min", 80)
-    if isinstance(target_count, bool) or not isinstance(target_count, int) or not 10 <= target_count <= 20:
-        raise ValueError("sourcing.target_count must be an integer from 10 through 20")
-    if isinstance(research_limit, bool) or not isinstance(research_limit, int) or not 1 <= research_limit <= target_count:
-        raise ValueError("research.limit must be from 1 through sourcing.target_count")
-    if not isinstance(full_coverage, bool):
-        raise ValueError("research.full_coverage must be boolean")
-    if not all(isinstance(item, int) and not isinstance(item, bool) for item in (watch_min, meeting_min)):
-        raise ValueError("recommendation thresholds must be integers")
-    if not 0 <= watch_min < meeting_min <= 100:
-        raise ValueError("thresholds must satisfy 0 <= watch_min < meeting_min <= 100")
-    assumptions = value.get("assumptions", [])
-    if not isinstance(assumptions, list) or not all(isinstance(item, str) for item in assumptions):
-        raise ValueError("assumptions must be an array of strings")
-    return {
-        "seed": seed,
-        "sourcing": {"target_count": target_count},
-        "research": {"limit": research_limit, "full_coverage": full_coverage},
-        "recommendation_thresholds": {
-            "watch_min": watch_min,
-            "meeting_min": meeting_min,
-        },
-        "assumptions": assumptions,
-    }
+    return ASSIGNMENT_V2.normalize_input(value)
 
 
 def _fingerprint(input_data: dict, thesis: str) -> str:
@@ -315,27 +284,67 @@ def _stage_record() -> dict:
     }
 
 
-def initialize_run(
-    run_dir: str | Path, input_path: str | Path, thesis_path: str | Path
-) -> dict:
-    run_dir = Path(run_dir)
+def _load_assignment_sources(
+    input_path: str | Path,
+    thesis_path: str | Path,
+    rubric_path: str | Path | None,
+) -> tuple[dict, str, dict]:
+    if rubric_path is None:
+        raise ValueError("rubric.json is required to initialize an assignment-v2 run")
     input_data = normalize_input(read_json(input_path))
     thesis = Path(thesis_path).read_text(encoding="utf-8")
-    _validate_text(thesis)
+    if not thesis.strip():
+        raise ValueError("thesis.md must not be empty")
+    rubric = read_json(rubric_path)
+    ASSIGNMENT_V2.validate_rubric(rubric, thesis)
+    return input_data, thesis, rubric
+
+
+def _stored_v2_assignment(run_dir: Path, manifest: dict) -> tuple[dict, str, dict, str]:
+    try:
+        input_data = normalize_input(read_json(run_dir / "input.json"))
+        thesis = (run_dir / "thesis.md").read_text(encoding="utf-8")
+        if not thesis.strip():
+            raise ValueError("thesis.md must not be empty")
+        rubric = read_json(run_dir / "rubric.json")
+        ASSIGNMENT_V2.validate_rubric(rubric, thesis)
+    except (OSError, json.JSONDecodeError, ValueError) as error:
+        raise ValueError(f"stored run assignment is invalid: {error}") from error
+    fingerprint = ASSIGNMENT_V2.assignment_fingerprint(input_data, thesis, rubric)
+    if manifest.get("version") != 2:
+        raise ValueError("existing run is not an assignment-v2 run")
+    if manifest.get("assignment_fingerprint") != fingerprint:
+        raise ValueError("stored run assignment fingerprint does not match its artifacts")
+    return input_data, thesis, rubric, fingerprint
+
+
+def initialize_run(
+    run_dir: str | Path,
+    input_path: str | Path,
+    thesis_path: str | Path,
+    rubric_path: str | Path | None = None,
+) -> dict:
+    run_dir = Path(run_dir)
+    input_data, thesis, rubric = _load_assignment_sources(
+        input_path, thesis_path, rubric_path
+    )
     fingerprint = _fingerprint(input_data, thesis)
+    rubric_fingerprint = ASSIGNMENT_V2.rubric_fingerprint(rubric)
+    assignment_fingerprint = ASSIGNMENT_V2.assignment_fingerprint(
+        input_data, thesis, rubric
+    )
     manifest_path = run_dir / "manifest.json"
     if manifest_path.exists():
         manifest = read_json(manifest_path)
-        try:
-            stored_input = normalize_input(read_json(run_dir / "input.json"))
-            stored_thesis = (run_dir / "thesis.md").read_text(encoding="utf-8")
-            stored_fingerprint = _fingerprint(stored_input, stored_thesis)
-        except (OSError, json.JSONDecodeError, ValueError) as error:
-            raise ValueError(f"stored run inputs are invalid: {error}") from error
-        if manifest.get("input_fingerprint") != stored_fingerprint:
+        stored_input, stored_thesis, _, stored_assignment_fingerprint = (
+            _stored_v2_assignment(run_dir, manifest)
+        )
+        if manifest.get("input_fingerprint") != _fingerprint(stored_input, stored_thesis):
             raise ValueError("stored run fingerprint does not match input.json and thesis.md")
-        if manifest.get("input_fingerprint") != fingerprint:
-            raise ValueError("existing run input or thesis does not match")
+        if stored_assignment_fingerprint != assignment_fingerprint:
+            raise ValueError(
+                "existing run assignment does not match; create a linked run with supersede"
+            )
         if manifest.get("validation", {}).get("status") == "completed":
             raise ValueError("existing run is already completed")
         return {"resumed": True, "manifest": manifest}
@@ -347,19 +356,75 @@ def initialize_run(
     (run_dir / "companies").mkdir(exist_ok=True)
     now = utc_now()
     manifest = {
-        "version": 1,
+        "version": 2,
         "run_id": run_dir.name,
         "created_at": now,
         "updated_at": now,
         "input_fingerprint": fingerprint,
+        "rubric_fingerprint": rubric_fingerprint,
+        "assignment_fingerprint": assignment_fingerprint,
+        "supersedes_run_id": None,
+        "supersedes_run_path": None,
+        "superseded_by": None,
         "stages": {"sourcing": _stage_record()},
         "companies": {},
         "validation": _stage_record(),
     }
     atomic_write_json(run_dir / "input.json", input_data)
     atomic_write_text(run_dir / "thesis.md", thesis)
+    atomic_write_json(run_dir / "rubric.json", rubric)
     atomic_write_json(manifest_path, manifest)
     return {"resumed": False, "manifest": manifest}
+
+
+def supersede_run(
+    supersedes_run_dir: str | Path,
+    run_dir: str | Path,
+    input_path: str | Path,
+    thesis_path: str | Path,
+    rubric_path: str | Path,
+) -> dict:
+    """Create a distinct assignment-v2 run and link both manifests safely."""
+    old_dir = Path(supersedes_run_dir).resolve()
+    new_dir = Path(run_dir).resolve()
+    if old_dir == new_dir or old_dir in new_dir.parents:
+        raise ValueError("superseding run must use a separate directory outside the old run")
+    if new_dir.exists() and any(new_dir.iterdir()):
+        raise ValueError("superseding run directory already contains files")
+    old_manifest_path = old_dir / "manifest.json"
+    old_manifest = read_json(old_manifest_path)
+    _, _, _, old_fingerprint = _stored_v2_assignment(old_dir, old_manifest)
+    if old_manifest.get("superseded_by"):
+        raise ValueError("existing run is already superseded")
+    input_data, thesis, rubric = _load_assignment_sources(
+        input_path, thesis_path, rubric_path
+    )
+    new_fingerprint = ASSIGNMENT_V2.assignment_fingerprint(input_data, thesis, rubric)
+    if new_fingerprint == old_fingerprint:
+        raise ValueError("superseding run must change input, thesis, or rubric")
+
+    result = initialize_run(new_dir, input_path, thesis_path, rubric_path)
+    new_manifest_path = new_dir / "manifest.json"
+    new_manifest = result["manifest"]
+    now = utc_now()
+    new_manifest.update(
+        {
+            "supersedes_run_id": old_manifest["run_id"],
+            "supersedes_run_path": str(old_dir),
+            "updated_at": now,
+        }
+    )
+    atomic_write_json(new_manifest_path, new_manifest)
+    old_manifest["superseded_by"] = {
+        "run_id": new_manifest["run_id"],
+        "path": str(new_dir),
+        "assignment_fingerprint": new_manifest["assignment_fingerprint"],
+        "linked_at": now,
+    }
+    old_manifest["updated_at"] = now
+    atomic_write_json(old_manifest_path, old_manifest)
+    result["manifest"] = new_manifest
+    return result
 
 
 def _safe_artifact(run_dir: Path, relative: str) -> Path:
@@ -1261,7 +1326,16 @@ def validate_run(run_dir: str | Path) -> dict:
         candidates = None
     if isinstance(candidates, list):
         return _validate_legacy(run_dir)
-    return _validate_new(run_dir)
+    result = _validate_new(run_dir)
+    try:
+        manifest = read_json(run_dir / "manifest.json")
+    except (OSError, json.JSONDecodeError):
+        manifest = {}
+    if isinstance(manifest, dict) and manifest.get("version") == 2:
+        lifecycle_errors = ASSIGNMENT_V2.validate_stored_assignment(run_dir, manifest)
+        result["errors"] = lifecycle_errors + result["errors"]
+        result["valid"] = not result["errors"]
+    return result
 
 
 def _compact(value: dict) -> str:
@@ -1278,6 +1352,13 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--run-dir", type=Path, required=True)
     init_parser.add_argument("--input", type=Path, required=True)
     init_parser.add_argument("--thesis", type=Path, required=True)
+    init_parser.add_argument("--rubric", type=Path, required=True)
+    supersede_parser = subparsers.add_parser("supersede")
+    supersede_parser.add_argument("--supersedes-run-dir", type=Path, required=True)
+    supersede_parser.add_argument("--run-dir", type=Path, required=True)
+    supersede_parser.add_argument("--input", type=Path, required=True)
+    supersede_parser.add_argument("--thesis", type=Path, required=True)
+    supersede_parser.add_argument("--rubric", type=Path, required=True)
     stage_parser = subparsers.add_parser("stage")
     stage_parser.add_argument("--run-dir", type=Path, required=True)
     stage_parser.add_argument("--stage", choices=sorted(STAGES), required=True)
@@ -1306,8 +1387,26 @@ def main(argv=None) -> int:
             print(_compact(result))
             return 0 if result["runtime"]["usable"] else EXIT_RUNTIME
         if args.command == "init":
-            result = initialize_run(args.run_dir, args.input, args.thesis)
+            result = initialize_run(args.run_dir, args.input, args.thesis, args.rubric)
             print(_compact({"status": "ok", "run_dir": str(args.run_dir), "resumed": result["resumed"]}))
+            return 0
+        if args.command == "supersede":
+            result = supersede_run(
+                args.supersedes_run_dir,
+                args.run_dir,
+                args.input,
+                args.thesis,
+                args.rubric,
+            )
+            print(
+                _compact(
+                    {
+                        "status": "ok",
+                        "run_dir": str(args.run_dir),
+                        "supersedes_run_id": result["manifest"]["supersedes_run_id"],
+                    }
+                )
+            )
             return 0
         if args.command == "stage":
             update_stage(

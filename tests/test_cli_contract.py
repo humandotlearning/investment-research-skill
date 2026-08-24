@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import subprocess
@@ -12,6 +13,15 @@ RUN = ROOT / "skills" / "investment-research-start" / "scripts" / "run.py"
 SEARCH = ROOT / "skills" / "investment-research-sourcing" / "scripts" / "search.py"
 RESEARCH = ROOT / "skills" / "investment-research-evidence" / "scripts" / "research.py"
 SOURCE_FIXTURES = ROOT / "tests" / "fixtures" / "sources"
+RUBRIC_FIXTURE = ROOT / "tests" / "fixtures" / "assignment-v2" / "rubric.json"
+
+
+def write_rubric(path, thesis_path):
+    rubric = json.loads(RUBRIC_FIXTURE.read_text(encoding="utf-8"))
+    thesis = thesis_path.read_text(encoding="utf-8")
+    rubric["thesis_fingerprint"] = hashlib.sha256(thesis.encode("utf-8")).hexdigest()
+    path.write_text(json.dumps(rubric), encoding="utf-8")
+    return path
 
 
 class CliContractTests(unittest.TestCase):
@@ -59,10 +69,11 @@ class CliContractTests(unittest.TestCase):
                 encoding="utf-8",
             )
             source_thesis.write_text("Automate recurring diligence.", encoding="utf-8")
+            source_rubric = write_rubric(root / "rubric.json", source_thesis)
             run_dir = root / "run"
             initialized = self.run_cli(
                 RUN, "init", "--run-dir", run_dir, "--input", source_input,
-                "--thesis", source_thesis, cwd=root,
+                "--thesis", source_thesis, "--rubric", source_rubric, cwd=root,
             )
             self.assertEqual(initialized.returncode, 0, initialized.stderr)
             output = run_dir / "sourcing" / "candidates.json"
@@ -193,10 +204,11 @@ class CliContractTests(unittest.TestCase):
                 encoding="utf-8",
             )
             source_thesis.write_text("Recurring workflows.", encoding="utf-8")
+            source_rubric = write_rubric(root / "rubric.json", source_thesis)
             run_dir = root / "run"
             initialized = self.run_cli(
                 RUN, "init", "--run-dir", run_dir, "--input", source_input,
-                "--thesis", source_thesis, cwd=root,
+                "--thesis", source_thesis, "--rubric", source_rubric, cwd=root,
             )
             self.assertEqual(initialized.returncode, 0, initialized.stderr)
             sourcing = run_dir / "sourcing"

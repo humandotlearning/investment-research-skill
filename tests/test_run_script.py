@@ -1,4 +1,5 @@
 import importlib.util
+import hashlib
 import json
 import os
 import tempfile
@@ -9,6 +10,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 RUN_SCRIPT = ROOT / "skills" / "investment-research-start" / "scripts" / "run.py"
+RUBRIC_FIXTURE = ROOT / "tests" / "fixtures" / "assignment-v2" / "rubric.json"
 
 
 def load_module():
@@ -16,6 +18,14 @@ def load_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def write_rubric(path, thesis_path):
+    rubric = json.loads(RUBRIC_FIXTURE.read_text(encoding="utf-8"))
+    thesis = thesis_path.read_text(encoding="utf-8")
+    rubric["thesis_fingerprint"] = hashlib.sha256(thesis.encode("utf-8")).hexdigest()
+    path.write_text(json.dumps(rubric), encoding="utf-8")
+    return path
 
 
 class RunScriptTests(unittest.TestCase):
@@ -133,21 +143,24 @@ class RunScriptTests(unittest.TestCase):
                 encoding="utf-8",
             )
             source_thesis.write_text("# Thesis\nRecurring workflows.\n", encoding="utf-8")
+            source_rubric = write_rubric(root / "source-rubric.json", source_thesis)
             run_dir = root / "run"
 
-            first = self.run_module.initialize_run(run_dir, source_input, source_thesis)
-            second = self.run_module.initialize_run(run_dir, source_input, source_thesis)
+            first = self.run_module.initialize_run(run_dir, source_input, source_thesis, source_rubric)
+            second = self.run_module.initialize_run(run_dir, source_input, source_thesis, source_rubric)
             normalized = json.loads((run_dir / "input.json").read_text(encoding="utf-8"))
             source_thesis.write_text("# Thesis\nChanged.\n", encoding="utf-8")
+            write_rubric(source_rubric, source_thesis)
 
-            with self.assertRaisesRegex(ValueError, "does not match"):
-                self.run_module.initialize_run(run_dir, source_input, source_thesis)
+            with self.assertRaisesRegex(ValueError, "supersede"):
+                self.run_module.initialize_run(run_dir, source_input, source_thesis, source_rubric)
 
         self.assertFalse(first["resumed"])
         self.assertTrue(second["resumed"])
-        self.assertEqual(normalized["sourcing"]["target_count"], 15)
-        self.assertEqual(normalized["research"]["limit"], 8)
-        self.assertFalse(normalized["research"]["full_coverage"])
+        self.assertEqual(normalized["version"], 2)
+        self.assertEqual(normalized["sourcing"]["target_count"], 10)
+        self.assertNotIn("limit", normalized["research"])
+        self.assertTrue(normalized["research"]["full_coverage"])
         self.assertEqual(normalized["recommendation_thresholds"]["watch_min"], 65)
 
     def test_init_rejects_tampered_or_already_completed_runs(self):
@@ -159,12 +172,13 @@ class RunScriptTests(unittest.TestCase):
                 json.dumps({"seed": {"type": "topic", "value": "AI"}}), encoding="utf-8"
             )
             source_thesis.write_text("# Thesis\n", encoding="utf-8")
+            source_rubric = write_rubric(root / "rubric.json", source_thesis)
             run_dir = root / "run"
-            self.run_module.initialize_run(run_dir, source_input, source_thesis)
+            self.run_module.initialize_run(run_dir, source_input, source_thesis, source_rubric)
 
             (run_dir / "thesis.md").write_text("# Tampered\n", encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "stored run fingerprint"):
-                self.run_module.initialize_run(run_dir, source_input, source_thesis)
+            with self.assertRaisesRegex(ValueError, "stored run assignment"):
+                self.run_module.initialize_run(run_dir, source_input, source_thesis, source_rubric)
 
             (run_dir / "thesis.md").write_text("# Thesis\n", encoding="utf-8")
             manifest_path = run_dir / "manifest.json"
@@ -172,7 +186,7 @@ class RunScriptTests(unittest.TestCase):
             manifest["validation"]["status"] = "completed"
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "already completed"):
-                self.run_module.initialize_run(run_dir, source_input, source_thesis)
+                self.run_module.initialize_run(run_dir, source_input, source_thesis, source_rubric)
 
     def test_full_coverage_is_an_explicit_boolean(self):
         normalized = self.run_module.normalize_input(
@@ -226,8 +240,9 @@ class RunScriptTests(unittest.TestCase):
                 encoding="utf-8",
             )
             thesis.write_text("# Thesis\nTest.\n", encoding="utf-8")
+            rubric = write_rubric(root / "rubric.json", thesis)
             run_dir = root / "run"
-            self.run_module.initialize_run(run_dir, source_input, thesis)
+            self.run_module.initialize_run(run_dir, source_input, thesis, rubric)
 
             with self.assertRaisesRegex(ValueError, "artifact"):
                 self.run_module.update_stage(
@@ -299,8 +314,9 @@ class RunScriptTests(unittest.TestCase):
                 json.dumps({"seed": {"type": "topic", "value": "AI"}}), encoding="utf-8"
             )
             thesis.write_text("# Thesis\n", encoding="utf-8")
+            rubric = write_rubric(root / "rubric.json", thesis)
             run_dir = root / "run"
-            self.run_module.initialize_run(run_dir, source_input, thesis)
+            self.run_module.initialize_run(run_dir, source_input, thesis, rubric)
             self.run_module.update_stage(run_dir, "research", "running", company="acme")
             self.run_module.update_stage(run_dir, "research", "running", company="acme")
 
@@ -316,8 +332,9 @@ class RunScriptTests(unittest.TestCase):
                 json.dumps({"seed": {"type": "topic", "value": "AI"}}), encoding="utf-8"
             )
             thesis.write_text("# Thesis\n", encoding="utf-8")
+            rubric = write_rubric(root / "rubric.json", thesis)
             run_dir = root / "run"
-            self.run_module.initialize_run(run_dir, source_input, thesis)
+            self.run_module.initialize_run(run_dir, source_input, thesis, rubric)
 
             with self.assertRaisesRegex(ValueError, "company slug"):
                 self.run_module.update_stage(

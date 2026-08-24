@@ -1,0 +1,134 @@
+# Task 2A1 Report: Assignment-v2 lifecycle
+
+## Status
+
+Implemented the Task 2A1 lifecycle slice only: assignment-v2 input normalization, strict thesis-bound rubric initialization, immutable assignment fingerprints, and explicit superseding-run API/CLI linkage. No sourcing, company, memo, or run-summary validation from Task 2A2 was implemented.
+
+## RED evidence
+
+### Initial focused RED
+
+Command:
+
+```powershell
+& 'C:\ProgramData\anaconda3\python.exe' -m unittest discover -s tests -p 'test_assignment_v2_lifecycle.py' -v
+```
+
+Expected result before production code:
+
+```text
+FAILED (failures=1, errors=7)
+```
+
+The failures demonstrated the missing v2 behavior:
+
+- `normalize_input` had no `version` and retained legacy defaults.
+- `initialize_run` accepted no rubric argument and did not require `rubric.json`.
+- missing-rubric initialization did not fail.
+- no superseding-run API or CLI existed.
+- the legacy fixture read-only validation test already passed.
+
+### Self-review edge-case RED
+
+After the initial implementation, self-review identified that an already populated destination run could be resumed and relinked by `supersede_run`.
+
+Command:
+
+```powershell
+& 'C:\ProgramData\anaconda3\python.exe' -m unittest discover -s tests -p 'test_assignment_v2_lifecycle.py' -v
+```
+
+Expected regression result:
+
+```text
+test_supersede_refuses_to_reuse_an_existing_destination_run ... FAIL
+Ran 8 tests
+FAILED (failures=1)
+```
+
+The production fix now rejects any non-empty superseding destination before creating or linking a run.
+
+## GREEN evidence
+
+### Focused lifecycle suite
+
+Command:
+
+```powershell
+& 'C:\ProgramData\anaconda3\python.exe' -m unittest discover -s tests -p 'test_assignment_v2_lifecycle.py' -v
+```
+
+Output summary:
+
+```text
+Ran 8 tests in 0.649s
+OK
+```
+
+Coverage includes:
+
+- v2 defaults and removal of the implicit research limit;
+- strict non-empty thesis and exact five-category rubric contract;
+- 20-point weights, 0/10/20 anchors, total weight 100, and thesis fingerprint binding;
+- v2 input and manifest materialization;
+- exact-assignment resume behavior;
+- changed input, topic, target, thesis, and rubric refusing in-place mutation;
+- bidirectional superseding links through API and CLI;
+- destination overwrite rejection;
+- read-only legacy fixture validation.
+
+### Full suite
+
+Command:
+
+```powershell
+& 'C:\ProgramData\anaconda3\python.exe' -m unittest discover -s tests -v
+```
+
+Final output summary:
+
+```text
+Ran 73 tests in 5.238s
+OK
+```
+
+The first full-suite run exposed two intentional compatibility assertions: the package helper allowlist still expected four scripts, and a legacy top-8 assertion expected `top priority` instead of v2 `full coverage`. Those assertions were updated to the approved v2 contract, after which all 73 tests passed.
+
+## Files changed
+
+- `skills/investment-research-start/scripts/assignment_v2.py`
+  - Standard-library-only v2 input, rubric, and fingerprint contracts.
+- `skills/investment-research-start/scripts/run.py`
+  - Delegates normalization/rubric work, requires rubric initialization, writes v2 manifests, exposes `supersede_run` and the `supersede` CLI.
+- `tests/fixtures/assignment-v2/input.json`
+- `tests/fixtures/assignment-v2/thesis.md`
+- `tests/fixtures/assignment-v2/rubric.json`
+- `tests/test_assignment_v2_lifecycle.py`
+  - Focused RED/GREEN lifecycle contract.
+- `tests/test_cli_contract.py`
+- `tests/test_package_contract.py`
+- `tests/test_run_script.py`
+- `tests/test_run_validation.py`
+  - Existing test setup and intentional v2 default/package assertions updated for required rubrics and the new helper module.
+
+## Compatibility decisions
+
+- Inputs without an explicit version normalize to v2; normalized input and new manifests contain `version: 2`.
+- The v2 default has `research.full_coverage: true` and no `research.limit`. An explicitly supplied, valid `research.limit` remains representable for compatibility but is never synthesized as a default.
+- `input_fingerprint` remains the canonical input-plus-thesis fingerprint used by the existing validator. New `rubric_fingerprint` and `assignment_fingerprint` fields add rubric integrity and cover the complete input/thesis/rubric assignment.
+- The rubric requires a `thesis_fingerprint` equal to SHA-256 of the exact thesis text, making its non-empty 0/10/20 anchors machine-bound to that thesis.
+- Legacy list-layout fixture validation remains read-only and unchanged.
+- Supersession never rewrites old `input.json`, `thesis.md`, or `rubric.json`. The new manifest records `supersedes_run_id` and `supersedes_run_path`; after the new forward link is durable, the old manifest receives `superseded_by` lifecycle metadata.
+
+## Self-review
+
+- Confirmed `run.py` delegates the new contract to a focused sibling module rather than adding validator logic.
+- Added and fixed the occupied-destination supersession regression.
+- Confirmed same-directory and nested-directory supersession are rejected.
+- Confirmed same-assignment supersession is rejected and ordinary initialization never mutates a mismatched fingerprinted run.
+- Confirmed no Task 2A2 sourcing/company/memo/summary validation was added.
+- Full-suite failures were traced to contract assertions, not hidden production errors, and were minimally updated.
+
+## Concerns
+
+- Bidirectional links span two directories and cannot be transactionally atomic with standard filesystem primitives. The implementation writes the new run's forward link first and then attempts the old run's backward link, so a failure during the second atomic write can leave a valid forward-only link. Assignment artifacts remain unchanged in that case.

@@ -85,7 +85,7 @@ class PackageContractTests(unittest.TestCase):
             self.assertIn(phrase, text)
         self.assertNotIn("exa is preferred", text)
 
-    def test_package_has_only_four_helpers_and_they_compile(self):
+    def test_package_has_only_expected_helpers_and_they_compile(self):
         scripts = sorted(
             path.relative_to(ROOT).as_posix()
             for path in SKILLS.rglob("*.py")
@@ -96,6 +96,7 @@ class PackageContractTests(unittest.TestCase):
                 "skills/investment-research-evidence/scripts/research.py",
                 "skills/investment-research-sourcing/scripts/search.py",
                 "skills/investment-research-sourcing/scripts/sources.py",
+                "skills/investment-research-start/scripts/assignment_v2.py",
                 "skills/investment-research-start/scripts/run.py",
             ],
         )
