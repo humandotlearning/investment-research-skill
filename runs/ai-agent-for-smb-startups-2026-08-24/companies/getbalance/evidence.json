@@ -1,0 +1,19 @@
+{
+  "company": {"name": "Balance", "slug": "getbalance", "website": "https://getbalance.ai"},
+  "coverage": {"team": "present", "product": "present", "market": "present", "traction": "present", "competitors": "missing", "freshness": "present"},
+  "missing_categories": ["competitors"],
+  "unresolved_gaps": ["competitors"],
+  "initial_coverage": {"team": "missing", "product": "missing", "market": "missing", "traction": "missing", "competitors": "missing", "freshness": "missing"},
+  "initial_missing_categories": ["team", "product", "market", "traction", "competitors", "freshness"],
+  "retrievals": [
+    {"artifact_path": "companies/getbalance/retrieval-initial.json", "provider": "exa", "query": "unavailable", "retrieved_at": "2026-08-24T10:08:58.051846Z", "status": "failed", "exit_code": 4},
+    {"artifact_path": "companies/getbalance/retrieval-retry.json", "provider": "web", "query": "Native web research for Balance investment evidence: team, product, market, traction, competitors, freshness", "retrieved_at": "2026-08-24T00:00:00Z", "status": "ok", "exit_code": 0, "missing_categories": ["team", "product", "market", "traction", "competitors", "freshness"]}
+  ],
+  "claims": [
+    {"id": "balance-team", "area": "team", "claim": "YC describes a team of repeat founders, CFOs, and AI engineers, including a former CFO and accountancy founder plus an Oxford and Imperial-trained AI researcher.", "claim_type": "verified_fact", "source_url": "https://www.ycombinator.com/companies/getbalance", "source_quality": "primary_record", "confidence": "high"},
+    {"id": "balance-product", "area": "product", "claim": "Balance says its AI agent Bea handles reconciliation, categorization, and reporting, with human accountants reviewing the books and signing off on returns.", "claim_type": "company_claim", "source_url": "https://getbalance.ai", "source_quality": "first_party", "confidence": "medium"},
+    {"id": "balance-market", "area": "market", "claim": "Accounting is a recurring, high-value SMB back-office workflow, and Balance targets the outsourced finance function rather than a narrow point tool.", "claim_type": "inference", "source_url": "https://www.ycombinator.com/companies/getbalance", "source_quality": "primary_record", "confidence": "medium"},
+    {"id": "balance-traction", "area": "traction", "claim": "A YC job listing says Balance had 60-plus customers across the UK and Denmark and was growing 40% month over month; this is company-reported and needs independent verification.", "claim_type": "company_claim", "source_url": "https://getbalance.ai", "source_quality": "first_party", "confidence": "medium"},
+    {"id": "balance-freshness", "area": "freshness", "claim": "YC lists Balance as active in the Winter 2026 batch.", "claim_type": "verified_fact", "source_url": "https://www.ycombinator.com/companies/getbalance", "source_quality": "primary_record", "confidence": "high"}
+  ]
+}

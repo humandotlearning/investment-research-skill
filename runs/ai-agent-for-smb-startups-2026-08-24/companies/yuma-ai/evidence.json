@@ -1,0 +1,19 @@
+{
+  "company": {"name": "Yuma AI", "slug": "yuma-ai", "website": "https://yuma.ai"},
+  "coverage": {"team": "present", "product": "present", "market": "present", "traction": "present", "competitors": "missing", "freshness": "present"},
+  "missing_categories": ["competitors"],
+  "unresolved_gaps": ["competitors"],
+  "initial_coverage": {"team": "missing", "product": "missing", "market": "missing", "traction": "missing", "competitors": "missing", "freshness": "missing"},
+  "initial_missing_categories": ["team", "product", "market", "traction", "competitors", "freshness"],
+  "retrievals": [
+    {"artifact_path": "companies/yuma-ai/retrieval-initial.json", "provider": "exa", "query": "unavailable", "retrieved_at": "2026-08-24T10:08:59.962988Z", "status": "failed", "exit_code": 4},
+    {"artifact_path": "companies/yuma-ai/retrieval-retry.json", "provider": "web", "query": "Native web research for Yuma AI investment evidence: team, product, market, traction, competitors, freshness", "retrieved_at": "2026-08-24T00:00:00Z", "status": "ok", "exit_code": 0, "missing_categories": ["team", "product", "market", "traction", "competitors", "freshness"]}
+  ],
+  "claims": [
+    {"id": "yuma-team", "area": "team", "claim": "YC lists Guillaume Luccisano as founder and identifies him as a repeat YC founder who previously co-founded Socialcam and Triplebyte.", "claim_type": "verified_fact", "source_url": "https://www.ycombinator.com/companies/yuma-ai", "source_quality": "primary_record", "confidence": "high"},
+    {"id": "yuma-product", "area": "product", "claim": "Yuma provides autonomous ecommerce support agents with integrations into Zendesk, Kustomer, and Gorgias, plus workflows that can fetch information and take actions in other apps.", "claim_type": "company_claim", "source_url": "https://yuma.ai", "source_quality": "first_party", "confidence": "medium"},
+    {"id": "yuma-market", "area": "market", "claim": "High-volume Shopify merchants have recurring support labor costs and standardized workflows, making ecommerce support a scalable vertical market, though Yuma focuses on larger brands.", "claim_type": "inference", "source_url": "https://www.ycombinator.com/companies/yuma-ai", "source_quality": "primary_record", "confidence": "medium"},
+    {"id": "yuma-traction", "area": "traction", "claim": "Yuma says it has processed millions of customer conversations for more than 100 commerce brands and that its best merchants automate as much as 93% of conversations.", "claim_type": "company_claim", "source_url": "https://yuma.ai", "source_quality": "first_party", "confidence": "medium"},
+    {"id": "yuma-freshness", "area": "freshness", "claim": "YC lists Yuma AI as active in the Winter 2023 batch with 26 employees and a current hiring profile.", "claim_type": "verified_fact", "source_url": "https://www.ycombinator.com/companies/yuma-ai", "source_quality": "primary_record", "confidence": "high"}
+  ]
+}

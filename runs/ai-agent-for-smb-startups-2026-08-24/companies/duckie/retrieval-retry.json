@@ -1,0 +1,12 @@
+{
+  "query": "Native web research for Duckie investment evidence: team, product, market, traction, competitors, freshness",
+  "provider": "web",
+  "retrieved_at": "2026-08-24T00:00:00Z",
+  "status": "ok",
+  "exit_code": 0,
+  "missing_categories": ["team", "product", "market", "traction", "competitors", "freshness"],
+  "results": [
+    {"title": "Duckie: Build AI Support Agents in Minutes | Y Combinator", "url": "https://www.ycombinator.com/companies/duckie", "published_date": "Winter 2024", "highlights": ["Duckie connects support workflows to sources such as Slack, Jira, Confluence, and Sentry; YC lists founders with Netflix, LinkedIn, C3 AI, and Princeton experience." ]},
+    {"title": "Duckie official website", "url": "https://duckie.ai", "published_date": null, "highlights": ["Official company website for Duckie." ]}
+  ]
+}

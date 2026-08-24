@@ -1,0 +1,29 @@
+{
+  "version": 2,
+  "seed": {
+    "type": "topic",
+    "value": "AI agents for small and medium-sized businesses and SMB-focused startups"
+  },
+  "sourcing": {
+    "target_count": 10,
+    "primary_sources": [
+      "product_hunt",
+      "yc"
+    ],
+    "signal_sources": [
+      "hacker_news"
+    ]
+  },
+  "research": {
+    "full_coverage": true
+  },
+  "recommendation_thresholds": {
+    "watch_min": 65,
+    "meeting_min": 80
+  },
+  "assumptions": [
+    "The investable opportunity is software that automates recurring SMB work or directly expands SMB revenue capacity.",
+    "SMB includes owner-operated and mid-market businesses that lack the resources to build bespoke AI systems.",
+    "Vertical focus and measurable workflow outcomes are preferred over generic assistant positioning."
+  ]
+}

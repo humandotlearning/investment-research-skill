@@ -1,0 +1,12 @@
+{
+  "query": "Native web research for Leaping AI investment evidence: team, product, market, traction, competitors, freshness",
+  "provider": "web",
+  "retrieved_at": "2026-08-24T00:00:00Z",
+  "status": "ok",
+  "exit_code": 0,
+  "missing_categories": ["team", "product", "market", "traction", "competitors", "freshness"],
+  "results": [
+    {"title": "Leaping AI: AI voice and texting agents | Y Combinator", "url": "https://www.ycombinator.com/companies/leaping-ai", "published_date": "Winter 2025", "highlights": ["Leaping AI deploys voice and texting agents for customer service, lead qualification, and appointment scheduling; YC reports thousands of calls daily and a 90% customer satisfaction claim." ]},
+    {"title": "Leaping AI official website", "url": "https://www.leapingai.com", "published_date": null, "highlights": ["Official company website for Leaping AI." ]}
+  ]
+}

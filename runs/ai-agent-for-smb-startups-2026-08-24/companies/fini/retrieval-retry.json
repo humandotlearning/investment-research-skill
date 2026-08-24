@@ -1,0 +1,12 @@
+{
+  "query": "Native web research for Fini investment evidence: team, product, market, traction, competitors, freshness",
+  "provider": "web",
+  "retrieved_at": "2026-08-24T00:00:00Z",
+  "status": "ok",
+  "exit_code": 0,
+  "missing_categories": ["team", "product", "market", "traction", "competitors", "freshness"],
+  "results": [
+    {"title": "Fini: Automate 80% of enterprise support with AI agents | Y Combinator", "url": "https://www.ycombinator.com/companies/fini", "published_date": "Summer 2022", "highlights": ["Fini describes accuracy-first agents for regulated support, with integrations into Zendesk, Salesforce, and internal APIs; it claims over one million tickets resolved monthly." ]},
+    {"title": "Fini official website", "url": "https://www.usefini.com", "published_date": null, "highlights": ["Official company website for Fini." ]}
+  ]
+}

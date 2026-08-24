@@ -1,0 +1,19 @@
+{
+  "company": {"name": "Robby", "slug": "robby", "website": "https://tryrobby.com"},
+  "coverage": {"team": "present", "product": "present", "market": "present", "traction": "present", "competitors": "missing", "freshness": "present"},
+  "missing_categories": ["competitors"],
+  "unresolved_gaps": ["competitors"],
+  "initial_coverage": {"team": "missing", "product": "missing", "market": "missing", "traction": "missing", "competitors": "missing", "freshness": "missing"},
+  "initial_missing_categories": ["team", "product", "market", "traction", "competitors", "freshness"],
+  "retrievals": [
+    {"artifact_path": "companies/robby/retrieval-initial.json", "provider": "exa", "query": "unavailable", "retrieved_at": "2026-08-24T10:08:59.757579Z", "status": "failed", "exit_code": 4},
+    {"artifact_path": "companies/robby/retrieval-retry.json", "provider": "web", "query": "Native web research for Robby investment evidence: team, product, market, traction, competitors, freshness", "retrieved_at": "2026-08-24T00:00:00Z", "status": "ok", "exit_code": 0, "missing_categories": ["team", "product", "market", "traction", "competitors", "freshness"]}
+  ],
+  "claims": [
+    {"id": "robby-team", "area": "team", "claim": "YC lists three founders with engineering and operating backgrounds at Affinity, Cloud Health Systems, Porter, Ironclad, Uber, and Bain, plus prior home-services strategy experience.", "claim_type": "verified_fact", "source_url": "https://www.ycombinator.com/companies/robby", "source_quality": "primary_record", "confidence": "high"},
+    {"id": "robby-product", "area": "product", "claim": "Robby combines customer, technician, and third-party data to surface high-intent opportunities, generate technician talking points, capture insights with voice AI, and give GMs a revenue command center.", "claim_type": "company_claim", "source_url": "https://tryrobby.com", "source_quality": "first_party", "confidence": "medium"},
+    {"id": "robby-market", "area": "market", "claim": "Home-services businesses have recurring missed-lead and technician-utilization problems, creating a direct revenue-expansion wedge for SMB operators.", "claim_type": "inference", "source_url": "https://www.ycombinator.com/companies/robby", "source_quality": "primary_record", "confidence": "medium"},
+    {"id": "robby-traction", "area": "traction", "claim": "Robby reports several paying customers each uncovering six figures of additional revenue opportunities weekly and a first-day close of $40,000 in new business within an hour.", "claim_type": "company_claim", "source_url": "https://tryrobby.com", "source_quality": "first_party", "confidence": "medium"},
+    {"id": "robby-freshness", "area": "freshness", "claim": "YC lists Robby as active in the Winter 2026 batch with three employees.", "claim_type": "verified_fact", "source_url": "https://www.ycombinator.com/companies/robby", "source_quality": "primary_record", "confidence": "high"}
+  ]
+}

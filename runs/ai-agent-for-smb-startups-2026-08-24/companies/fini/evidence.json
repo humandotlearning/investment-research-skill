@@ -1,0 +1,19 @@
+{
+  "company": {"name": "Fini", "slug": "fini", "website": "https://www.usefini.com"},
+  "coverage": {"team": "present", "product": "present", "market": "present", "traction": "present", "competitors": "missing", "freshness": "present"},
+  "missing_categories": ["competitors"],
+  "unresolved_gaps": ["competitors"],
+  "initial_coverage": {"team": "missing", "product": "missing", "market": "missing", "traction": "missing", "competitors": "missing", "freshness": "missing"},
+  "initial_missing_categories": ["team", "product", "market", "traction", "competitors", "freshness"],
+  "retrievals": [
+    {"artifact_path": "companies/fini/retrieval-initial.json", "provider": "exa", "query": "unavailable", "retrieved_at": "2026-08-24T10:08:58.754904Z", "status": "failed", "exit_code": 4},
+    {"artifact_path": "companies/fini/retrieval-retry.json", "provider": "web", "query": "Native web research for Fini investment evidence: team, product, market, traction, competitors, freshness", "retrieved_at": "2026-08-24T00:00:00Z", "status": "ok", "exit_code": 0, "missing_categories": ["team", "product", "market", "traction", "competitors", "freshness"]}
+  ],
+  "claims": [
+    {"id": "fini-team", "area": "team", "claim": "YC describes founders Deepak Singla and Hakim K with prior Uber experience and backgrounds in product, growth, software engineering, and analytics.", "claim_type": "verified_fact", "source_url": "https://www.ycombinator.com/companies/fini", "source_quality": "primary_record", "confidence": "high"},
+    {"id": "fini-product", "area": "product", "claim": "Fini says its agents resolve complex support workflows such as refunds and KYC checks with compliance monitoring, human escalation, and integrations into support and internal systems.", "claim_type": "company_claim", "source_url": "https://www.usefini.com", "source_quality": "first_party", "confidence": "medium"},
+    {"id": "fini-market", "area": "market", "claim": "Regulated fintech, insurance, healthcare, ecommerce, gaming, and fitness support are large recurring labor-spend markets, though Fini positions itself primarily toward enterprises rather than SMBs.", "claim_type": "inference", "source_url": "https://www.ycombinator.com/companies/fini", "source_quality": "primary_record", "confidence": "medium"},
+    {"id": "fini-traction", "area": "traction", "claim": "Fini claims to resolve more than one million tickets monthly for customers including the US Chamber of Commerce Foundation, Atlas, Found, and Bitdefender.", "claim_type": "company_claim", "source_url": "https://www.usefini.com", "source_quality": "first_party", "confidence": "medium"},
+    {"id": "fini-freshness", "area": "freshness", "claim": "YC lists Fini as active in the Summer 2022 batch with 14 employees.", "claim_type": "verified_fact", "source_url": "https://www.ycombinator.com/companies/fini", "source_quality": "primary_record", "confidence": "high"}
+  ]
+}

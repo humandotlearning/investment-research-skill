@@ -1,0 +1,12 @@
+{
+  "query": "Native web research for Robby investment evidence: team, product, market, traction, competitors, freshness",
+  "provider": "web",
+  "retrieved_at": "2026-08-24T00:00:00Z",
+  "status": "ok",
+  "exit_code": 0,
+  "missing_categories": ["team", "product", "market", "traction", "competitors", "freshness"],
+  "results": [
+    {"title": "Robby: AI agents that grow revenue for home services businesses | Y Combinator", "url": "https://www.ycombinator.com/companies/robby", "published_date": "Winter 2026", "highlights": ["Robby combines customer, technician, and third-party data to surface leads and equip technicians with talking points; YC reports several paying customers and six-figure weekly opportunities." ]},
+    {"title": "Robby official website", "url": "https://tryrobby.com", "published_date": null, "highlights": ["Official company website for Robby." ]}
+  ]
+}

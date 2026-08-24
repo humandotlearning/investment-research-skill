@@ -1,0 +1,19 @@
+{
+  "company": {"name": "Parahelp", "slug": "parahelp", "website": "https://parahelp.com"},
+  "coverage": {"team": "present", "product": "present", "market": "present", "traction": "present", "competitors": "missing", "freshness": "present"},
+  "missing_categories": ["competitors"],
+  "unresolved_gaps": ["competitors"],
+  "initial_coverage": {"team": "missing", "product": "missing", "market": "missing", "traction": "missing", "competitors": "missing", "freshness": "missing"},
+  "initial_missing_categories": ["team", "product", "market", "traction", "competitors", "freshness"],
+  "retrievals": [
+    {"artifact_path": "companies/parahelp/retrieval-initial.json", "provider": "exa", "query": "unavailable", "retrieved_at": "2026-08-24T10:08:59.614468Z", "status": "failed", "exit_code": 4},
+    {"artifact_path": "companies/parahelp/retrieval-retry.json", "provider": "web", "query": "Native web research for Parahelp investment evidence: team, product, market, traction, competitors, freshness", "retrieved_at": "2026-08-24T00:00:00Z", "status": "ok", "exit_code": 0, "missing_categories": ["team", "product", "market", "traction", "competitors", "freshness"]}
+  ],
+  "claims": [
+    {"id": "parahelp-team", "area": "team", "claim": "YC lists founders Anker Ryhl and Mads Liechti, who began programming and building consumer apps together as teenagers.", "claim_type": "verified_fact", "source_url": "https://www.ycombinator.com/companies/parahelp", "source_quality": "primary_record", "confidence": "high"},
+    {"id": "parahelp-product", "area": "product", "claim": "Parahelp says its agent resolves complex support tickets end to end by taking actions in tools such as Stripe, Retool, and Linear and working within Intercom and Zendesk.", "claim_type": "company_claim", "source_url": "https://parahelp.com", "source_quality": "first_party", "confidence": "medium"},
+    {"id": "parahelp-market", "area": "market", "claim": "Software-company customer support is a recurring workflow with clear labor savings, though Parahelp is positioned for fast-moving software companies rather than SMBs specifically.", "claim_type": "inference", "source_url": "https://www.ycombinator.com/companies/parahelp", "source_quality": "primary_record", "confidence": "medium"},
+    {"id": "parahelp-traction", "area": "traction", "claim": "Parahelp reports helping leading CX teams at Captions and Perplexity and cites a case study resolving 46% of tickets within seven days of implementation.", "claim_type": "company_claim", "source_url": "https://parahelp.com", "source_quality": "first_party", "confidence": "medium"},
+    {"id": "parahelp-freshness", "area": "freshness", "claim": "YC lists Parahelp as active in the Summer 2024 batch and shows current founder and company information.", "claim_type": "verified_fact", "source_url": "https://www.ycombinator.com/companies/parahelp", "source_quality": "primary_record", "confidence": "high"}
+  ]
+}

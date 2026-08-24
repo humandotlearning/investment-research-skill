@@ -1,0 +1,18 @@
+{
+  "company": {"name": "Duckie", "slug": "duckie", "website": "https://duckie.ai"},
+  "coverage": {"team": "present", "product": "present", "market": "present", "traction": "missing", "competitors": "missing", "freshness": "present"},
+  "missing_categories": ["traction", "competitors"],
+  "unresolved_gaps": ["traction", "competitors"],
+  "initial_coverage": {"team": "missing", "product": "missing", "market": "missing", "traction": "missing", "competitors": "missing", "freshness": "missing"},
+  "initial_missing_categories": ["team", "product", "market", "traction", "competitors", "freshness"],
+  "retrievals": [
+    {"artifact_path": "companies/duckie/retrieval-initial.json", "provider": "exa", "query": "unavailable", "retrieved_at": "2026-08-24T10:08:58.644587Z", "status": "failed", "exit_code": 4},
+    {"artifact_path": "companies/duckie/retrieval-retry.json", "provider": "web", "query": "Native web research for Duckie investment evidence: team, product, market, traction, competitors, freshness", "retrieved_at": "2026-08-24T00:00:00Z", "status": "ok", "exit_code": 0, "missing_categories": ["team", "product", "market", "traction", "competitors", "freshness"]}
+  ],
+  "claims": [
+    {"id": "duckie-team", "area": "team", "claim": "YC lists Valerie Li, a former Netflix tech lead and LinkedIn engineer, and Joel Ritossa, a former C3 AI engineer and Princeton computer-science graduate.", "claim_type": "verified_fact", "source_url": "https://www.ycombinator.com/companies/duckie", "source_quality": "primary_record", "confidence": "high"},
+    {"id": "duckie-product", "area": "product", "claim": "Duckie says support teams can build predictable AI workflows that search knowledge sources, resolve technical issues, and update documentation.", "claim_type": "company_claim", "source_url": "https://duckie.ai", "source_quality": "first_party", "confidence": "medium"},
+    {"id": "duckie-market", "area": "market", "claim": "Technical support and internal knowledge workflows recur across software businesses, but the available evidence does not establish a specifically SMB-focused go-to-market motion.", "claim_type": "inference", "source_url": "https://www.ycombinator.com/companies/duckie", "source_quality": "primary_record", "confidence": "medium"},
+    {"id": "duckie-freshness", "area": "freshness", "claim": "YC lists Duckie as active in the Winter 2024 batch with four employees.", "claim_type": "verified_fact", "source_url": "https://www.ycombinator.com/companies/duckie", "source_quality": "primary_record", "confidence": "high"}
+  ]
+}
