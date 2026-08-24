@@ -197,10 +197,17 @@ class RunScriptTests(unittest.TestCase):
         normalized = self.run_module.normalize_input(
             {
                 "seed": {"type": "topic", "value": "AI"},
-                "research": {"limit": 8, "full_coverage": True},
+                "research": {"full_coverage": True},
             }
         )
         self.assertTrue(normalized["research"]["full_coverage"])
+        with self.assertRaisesRegex(ValueError, "limit"):
+            self.run_module.normalize_input(
+                {
+                    "seed": {"type": "topic", "value": "AI"},
+                    "research": {"limit": 8, "full_coverage": True},
+                }
+            )
         with self.assertRaisesRegex(ValueError, "full_coverage"):
             self.run_module.normalize_input(
                 {

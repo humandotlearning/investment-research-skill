@@ -325,12 +325,13 @@ def _thesis_fit_reasons(name: str, topic: str, thesis: str) -> list[str]:
 
 def _research_limit(input_data: dict, requested_count: int) -> int:
     research = input_data.get("research", {}) if isinstance(input_data, dict) else {}
-    value = research.get("limit", 8) if isinstance(research, dict) else 8
-    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= requested_count:
-        raise RetrievalError(
-            "research.limit must be from 1 through sourcing.target_count", EXIT_INPUT
-        )
-    return value
+    if not isinstance(research, dict):
+        raise RetrievalError("research must be an object", EXIT_INPUT)
+    if research.get("full_coverage", True) is not True:
+        raise RetrievalError("research.full_coverage must be exactly true", EXIT_INPUT)
+    if "limit" in research:
+        raise RetrievalError("research.limit is not allowed", EXIT_INPUT)
+    return requested_count
 
 
 def _run_candidate(candidate: dict, research_limit: int) -> dict:

@@ -100,6 +100,8 @@ class AssignmentEvidenceCoverageTests(unittest.TestCase):
                 {
                     "title": candidate["name"],
                     "url": origin["canonical_url"],
+                    "source": origin["source"],
+                    "source_id": origin["source_id"],
                     "published_date": origin["publication_or_batch_date"],
                     "highlights": [candidate["one_line_description"]],
                 }
@@ -217,6 +219,9 @@ class AssignmentEvidenceCoverageTests(unittest.TestCase):
                 "| Traction | 10 | claim:traction-1 | Evidence. |\n"
                 "| Thesis alignment | 10 | claim:product-1, claim:market-1 | Evidence. |\n"
                 "| **Final score** | **50 / 100** | **Arithmetic total** | |\n\n"
+                "## Evidence-backed narrative\n"
+                f"- {name} reports $2M ARR. [refs: traction-1]\n"
+                f"- {name} reports 90% retention. [refs: traction-1]\n\n"
                 "## Recommendation\nPass\n\n"
                 "## Risks and open questions\n- Company-reported evidence needs confirmation.\n"
             )
@@ -247,6 +252,39 @@ class AssignmentEvidenceCoverageTests(unittest.TestCase):
 
     def _validate_errors(self, run_dir: Path):
         return "\n".join(self.run_module.validate_run(run_dir)["errors"]).lower()
+
+    def _rewrite_input_contract(self, run_dir: Path, change):
+        input_path = run_dir / "input.json"
+        manifest_path = run_dir / "manifest.json"
+        input_data = json.loads(input_path.read_text(encoding="utf-8"))
+        change(input_data)
+        input_path.write_text(json.dumps(input_data), encoding="utf-8")
+        thesis = (run_dir / "thesis.md").read_text(encoding="utf-8")
+        rubric = json.loads((run_dir / "rubric.json").read_text(encoding="utf-8"))
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["input_fingerprint"] = self.run_module.ASSIGNMENT_V2.input_fingerprint(
+            input_data, thesis
+        )
+        manifest["assignment_fingerprint"] = self.run_module.ASSIGNMENT_V2.assignment_fingerprint(
+            input_data, thesis, rubric
+        )
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    def _set_claim_source(self, run_dir: Path, claim_id: str, source_url: str, *, claim_type=None):
+        company_dir = run_dir / "companies" / "company-1"
+        evidence_path = company_dir / "evidence.json"
+        evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+        claim = next(claim for claim in evidence["claims"] if claim["id"] == claim_id)
+        claim["source_url"] = source_url
+        if claim_type is not None:
+            claim["claim_type"] = claim_type
+        evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+        retrieval_path = company_dir / "retrieval-initial.json"
+        retrieval = json.loads(retrieval_path.read_text(encoding="utf-8"))
+        retrieval["results"].append(
+            {"title": "Supporting source", "url": source_url, "published_date": None, "highlights": []}
+        )
+        retrieval_path.write_text(json.dumps(retrieval), encoding="utf-8")
 
     def test_three_candidates_cannot_complete_sourcing_and_must_be_partial(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -296,6 +334,95 @@ class AssignmentEvidenceCoverageTests(unittest.TestCase):
                     artifacts=["sourcing/retrieval.json", "sourcing/candidates.json"],
                 )
 
+    def test_assignment_rejects_partial_research_modes_at_normalization_and_init(self):
+        invalid_research = (
+            {"full_coverage": False},
+            {"full_coverage": None},
+            {"full_coverage": "true"},
+            {"full_coverage": True, "limit": 10},
+            {"full_coverage": True, "limit": False},
+            {"full_coverage": True, "limit": None},
+            {"full_coverage": True, "limit": {}},
+        )
+        for index, research in enumerate(invalid_research):
+            with self.subTest(research=research), self.assertRaisesRegex(
+                ValueError, "full_coverage|limit"
+            ):
+                self.run_module.normalize_input(
+                    {"seed": {"type": "topic", "value": "AI"}, "research": research}
+                )
+
+            with self.subTest(init_research=research), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                input_path, thesis_path, rubric_path = self._write_assignment(root)
+                input_data = json.loads(input_path.read_text(encoding="utf-8"))
+                input_data["research"] = research
+                input_path.write_text(json.dumps(input_data), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "full_coverage|limit"):
+                    self.run_module.initialize_run(
+                        root / f"run-{index}", input_path, thesis_path, rubric_path
+                    )
+
+        for wrong_shape in (None, [], "all"):
+            with self.subTest(research_shape=wrong_shape), self.assertRaisesRegex(
+                ValueError, "research"
+            ):
+                self.run_module.normalize_input(
+                    {"seed": {"type": "topic", "value": "AI"}, "research": wrong_shape}
+                )
+
+    def test_validation_rejects_false_full_coverage_and_synthesized_limit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = self.make_complete_run(Path(directory))
+            candidates_path = run_dir / "sourcing" / "candidates.json"
+            candidates = json.loads(candidates_path.read_text(encoding="utf-8"))
+            for candidate in candidates["candidates"][8:]:
+                candidate["selected_for_research"] = False
+                company_dir = run_dir / "companies" / candidate["slug"]
+                for artifact in company_dir.iterdir():
+                    artifact.unlink()
+                company_dir.rmdir()
+            candidates_path.write_text(json.dumps(candidates), encoding="utf-8")
+            manifest_path = run_dir / "manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["companies"].pop("company-9")
+            manifest["companies"].pop("company-10")
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            summary_path = run_dir / "run-summary.md"
+            summary_path.write_text(
+                summary_path.read_text(encoding="utf-8").replace(
+                    "## Skipped candidates\nNone.",
+                    "## Skipped candidates\nCompany 9\nCompany 10",
+                ),
+                encoding="utf-8",
+            )
+            self._rewrite_input_contract(
+                run_dir,
+                lambda value: value.update(
+                    {"research": {"full_coverage": False, "limit": 8}}
+                ),
+            )
+
+            result = self.run_module.validate_run(run_dir)
+
+        self.assertFalse(result["valid"], result)
+        self.assertTrue(any("full_coverage" in error or "limit" in error for error in result["errors"]))
+        self.assertTrue(any("company 9" in error.lower() for error in result["errors"]))
+
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = self.make_complete_run(Path(directory))
+            self._rewrite_input_contract(
+                run_dir,
+                lambda value: value.update(
+                    {"research": {"full_coverage": True, "limit": 10}}
+                ),
+            )
+
+            result = self.run_module.validate_run(run_dir)
+
+        self.assertFalse(result["valid"], result)
+        self.assertTrue(any("limit" in error for error in result["errors"]))
+
     def test_generic_company_page_and_hacker_news_cannot_be_origins(self):
         mutations = (
             ("web", "https://company1.example/about", "product hunt or yc"),
@@ -319,6 +446,107 @@ class AssignmentEvidenceCoverageTests(unittest.TestCase):
                 errors = self._validate_errors(run_dir)
 
             self.assertIn(phrase, errors)
+
+    def test_origins_are_record_specific_and_bound_to_sourcing_provenance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = self.make_complete_run(Path(directory))
+            candidates_path = run_dir / "sourcing" / "candidates.json"
+            candidates = json.loads(candidates_path.read_text(encoding="utf-8"))
+            candidate = candidates["candidates"][0]
+            origin = candidate["origins"][0]
+            old_url = origin["canonical_url"]
+            bad_url = "https://www.ycombinator.com/blog/company-1"
+            origin["canonical_url"] = bad_url
+            candidate["source_urls"] = [
+                bad_url if url == old_url else url for url in candidate["source_urls"]
+            ]
+            for signal in candidate["freshness_or_traction_signals"]:
+                if signal["source_url"] == old_url:
+                    signal["source_url"] = bad_url
+            candidates_path.write_text(json.dumps(candidates), encoding="utf-8")
+            retrieval_path = run_dir / "sourcing" / "retrieval.json"
+            retrieval = json.loads(retrieval_path.read_text(encoding="utf-8"))
+            result_record = next(result for result in retrieval["results"] if result["url"] == old_url)
+            result_record["url"] = bad_url
+            retrieval_path.write_text(json.dumps(retrieval), encoding="utf-8")
+
+            result = self.run_module.validate_run(run_dir)
+
+        self.assertFalse(result["valid"], result)
+        self.assertTrue(any("record-specific" in error for error in result["errors"]))
+
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = self.make_complete_run(Path(directory))
+            candidates_path = run_dir / "sourcing" / "candidates.json"
+            candidates = json.loads(candidates_path.read_text(encoding="utf-8"))
+            candidates["candidates"][0]["origins"][0]["canonical_url"] = (
+                "https://www.ycombinator.com/companies/absent-record?utm_source=test"
+            )
+            candidates_path.write_text(json.dumps(candidates), encoding="utf-8")
+
+            result = self.run_module.validate_run(run_dir)
+
+        self.assertFalse(result["valid"], result)
+        self.assertTrue(any("sourcing provenance" in error for error in result["errors"]))
+
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = self.make_complete_run(Path(directory))
+            candidates_path = run_dir / "sourcing" / "candidates.json"
+            candidates = json.loads(candidates_path.read_text(encoding="utf-8"))
+            candidates["excluded"] = [{
+                "name": "Excluded Co",
+                "candidate_type": "excluded",
+                "reason": "Outside thesis",
+                "origins": [self._origin(99)],
+            }]
+            candidates_path.write_text(json.dumps(candidates), encoding="utf-8")
+            summary_path = run_dir / "run-summary.md"
+            summary_path.write_text(
+                summary_path.read_text(encoding="utf-8").replace(
+                    "## Skipped candidates\nNone.", "## Skipped candidates\nExcluded Co"
+                ),
+                encoding="utf-8",
+            )
+
+            result = self.run_module.validate_run(run_dir)
+
+        self.assertFalse(result["valid"], result)
+        self.assertTrue(any("exclusion excluded co" in error.lower() and "provenance" in error.lower() for error in result["errors"]))
+
+    def test_origin_provider_and_source_id_must_match_retrieval_when_present(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = self.make_complete_run(Path(directory))
+            candidates_path = run_dir / "sourcing" / "candidates.json"
+            candidates = json.loads(candidates_path.read_text(encoding="utf-8"))
+            candidates["candidates"][0]["origins"][0]["source_id"] = "wrong-yc-id"
+            candidates_path.write_text(json.dumps(candidates), encoding="utf-8")
+
+            result = self.run_module.validate_run(run_dir)
+
+        self.assertFalse(result["valid"], result)
+        self.assertTrue(any("source_id" in error for error in result["errors"]))
+
+    def test_origin_provenance_comparison_normalizes_tracking_query(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = self.make_complete_run(Path(directory))
+            candidates_path = run_dir / "sourcing" / "candidates.json"
+            candidates = json.loads(candidates_path.read_text(encoding="utf-8"))
+            candidate = candidates["candidates"][0]
+            origin = candidate["origins"][0]
+            original = origin["canonical_url"]
+            tracked = original + "/?utm_source=assignment"
+            origin["canonical_url"] = tracked
+            candidate["source_urls"] = [
+                tracked if url == original else url for url in candidate["source_urls"]
+            ]
+            for signal in candidate["freshness_or_traction_signals"]:
+                if signal["source_url"] == original:
+                    signal["source_url"] = tracked
+            candidates_path.write_text(json.dumps(candidates), encoding="utf-8")
+
+            result = self.run_module.validate_run(run_dir)
+
+        self.assertTrue(result["valid"], result["errors"])
 
     def test_exclusion_without_product_hunt_or_yc_provenance_fails(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -413,6 +641,107 @@ class AssignmentEvidenceCoverageTests(unittest.TestCase):
         self.assertIn("unsupported claim source", errors)
         self.assertIn("company 1", errors)
 
+    def test_product_hunt_and_yc_claims_must_match_candidate_origins(self):
+        for source_url in (
+            "https://www.ycombinator.com/companies/different-company",
+            "https://www.producthunt.com/posts/different-company",
+        ):
+            with self.subTest(source_url=source_url), tempfile.TemporaryDirectory() as directory:
+                run_dir = self.make_complete_run(Path(directory))
+                self._set_claim_source(
+                    run_dir, "team-1", source_url, claim_type="verified_fact"
+                )
+
+                result = self.run_module.validate_run(run_dir)
+
+            self.assertFalse(result["valid"], result)
+            self.assertTrue(any("recorded origin" in error for error in result["errors"]))
+
+    def test_company_claim_source_accepts_trusted_subdomains_not_siblings_or_suffix_tricks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = self.make_complete_run(Path(directory))
+            self._set_claim_source(
+                run_dir,
+                "traction-1",
+                "https://metrics.company1.example/arr",
+                claim_type="verified_fact",
+            )
+
+            result = self.run_module.validate_run(run_dir)
+
+        self.assertTrue(result["valid"], result["errors"])
+
+        for source_url in (
+            "https://sibling-company1.example/arr",
+            "https://company1.example.evil.test/arr",
+            "https://company1-example.test/arr",
+        ):
+            with self.subTest(source_url=source_url), tempfile.TemporaryDirectory() as directory:
+                run_dir = self.make_complete_run(Path(directory))
+                self._set_claim_source(
+                    run_dir, "traction-1", source_url, claim_type="verified_fact"
+                )
+
+                result = self.run_module.validate_run(run_dir)
+
+            self.assertFalse(result["valid"], result)
+            self.assertTrue(any("unsupported claim source" in error for error in result["errors"]))
+
+    def test_missing_host_urls_never_match_each_other(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = self.make_complete_run(Path(directory))
+            malformed = "http:///missing-host"
+            candidates_path = run_dir / "sourcing" / "candidates.json"
+            candidates = json.loads(candidates_path.read_text(encoding="utf-8"))
+            candidates["candidates"][0]["website"] = malformed
+            candidates_path.write_text(json.dumps(candidates), encoding="utf-8")
+            company_dir = run_dir / "companies" / "company-1"
+            evidence_path = company_dir / "evidence.json"
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            evidence["company"]["website"] = malformed
+            for claim in evidence["claims"]:
+                claim["source_url"] = malformed
+            evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+            retrieval_path = company_dir / "retrieval-initial.json"
+            retrieval = json.loads(retrieval_path.read_text(encoding="utf-8"))
+            retrieval["results"][0]["url"] = malformed
+            retrieval_path.write_text(json.dumps(retrieval), encoding="utf-8")
+
+            result = self.run_module.validate_run(run_dir)
+
+        self.assertFalse(result["valid"], result)
+        self.assertTrue(any("absolute http" in error.lower() or "hostname" in error.lower() for error in result["errors"]))
+
+    def test_malformed_origin_signal_and_claim_urls_are_rejected_independently(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = self.make_complete_run(Path(directory))
+            candidates_path = run_dir / "sourcing" / "candidates.json"
+            candidates = json.loads(candidates_path.read_text(encoding="utf-8"))
+            candidates["candidates"][0]["origins"][0]["canonical_url"] = "https:///companies/no-host"
+            candidates_path.write_text(json.dumps(candidates), encoding="utf-8")
+            result = self.run_module.validate_run(run_dir)
+        self.assertFalse(result["valid"], result)
+
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = self.make_complete_run(Path(directory))
+            candidates_path = run_dir / "sourcing" / "candidates.json"
+            candidates = json.loads(candidates_path.read_text(encoding="utf-8"))
+            candidates["candidates"][0]["freshness_or_traction_signals"][0][
+                "source_url"
+            ] = "https:///item?id=1"
+            candidates_path.write_text(json.dumps(candidates), encoding="utf-8")
+            result = self.run_module.validate_run(run_dir)
+        self.assertFalse(result["valid"], result)
+
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = self.make_complete_run(Path(directory))
+            evidence_path = run_dir / "companies" / "company-1" / "evidence.json"
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            evidence["claims"][0]["source_url"] = "https:///claim/no-host"
+            evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+            result = self.run_module.validate_run(run_dir)
+        self.assertFalse(result["valid"], result)
+
     def test_score_arithmetic_company_claim_cap_and_missing_coverage_are_enforced(self):
         mutations = {
             "arithmetic": ("**50 / 100**", "**51 / 100**", "score arithmetic mismatch"),
@@ -432,7 +761,7 @@ class AssignmentEvidenceCoverageTests(unittest.TestCase):
             run_dir = self.make_complete_run(Path(directory))
             evidence_path = run_dir / "companies" / "company-1" / "evidence.json"
             evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
-            next(claim for claim in evidence["claims"] if claim["id"] == "product-1")[
+            next(claim for claim in evidence["claims"] if claim["id"] == "team-1")[
                 "claim_type"
             ] = "verified_fact"
             evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
@@ -440,7 +769,7 @@ class AssignmentEvidenceCoverageTests(unittest.TestCase):
             analysis = analysis_path.read_text(encoding="utf-8")
             analysis = analysis.replace(
                 "| Team | 10 | claim:team-1 |",
-                "| Team | 11 | claim:team-1, claim:product-1 |",
+                "| Team | 11 | claim:team-1 |",
             ).replace("**50 / 100**", "**51 / 100**")
             analysis_path.write_text(analysis, encoding="utf-8")
 
@@ -460,6 +789,82 @@ class AssignmentEvidenceCoverageTests(unittest.TestCase):
             errors = self._validate_errors(run_dir)
 
         self.assertIn("missing coverage must score zero", errors)
+
+    def test_analysis_narrative_requires_resolved_same_company_refs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = self.make_complete_run(Path(directory))
+            result = self.run_module.validate_run(run_dir)
+        self.assertTrue(result["valid"], result["errors"])
+
+        mutations = (
+            (
+                "reports $2M ARR. [refs: traction-1]",
+                "reports $2M ARR.",
+                "factual narrative",
+            ),
+            (
+                "reports 90% retention. [refs: traction-1]",
+                "reports 90% retention. [refs: other-company-traction]",
+                "unknown narrative reference",
+            ),
+        )
+        for old, new, phrase in mutations:
+            with self.subTest(new=new), tempfile.TemporaryDirectory() as directory:
+                run_dir = self.make_complete_run(Path(directory))
+                analysis_path = run_dir / "companies" / "company-1" / "analysis.md"
+                analysis_path.write_text(
+                    analysis_path.read_text(encoding="utf-8").replace(old, new),
+                    encoding="utf-8",
+                )
+
+                result = self.run_module.validate_run(run_dir)
+
+            self.assertFalse(result["valid"], result)
+            self.assertTrue(any(phrase in error.lower() for error in result["errors"]))
+
+    def test_factual_metrics_in_risk_section_are_not_silently_exempt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = self.make_complete_run(Path(directory))
+            analysis_path = run_dir / "companies" / "company-1" / "analysis.md"
+            analysis_path.write_text(
+                analysis_path.read_text(encoding="utf-8").replace(
+                    "- Company-reported evidence needs confirmation.",
+                    "- Retention fell to 40% and ARR declined to $1M.",
+                ),
+                encoding="utf-8",
+            )
+
+            result = self.run_module.validate_run(run_dir)
+
+        self.assertFalse(result["valid"], result)
+        self.assertTrue(any("factual narrative" in error.lower() for error in result["errors"]))
+
+    def test_qualitative_assertions_and_unstructured_narrative_are_not_ignored(self):
+        mutations = (
+            (
+                "- Company 1 reports $2M ARR. [refs: traction-1]",
+                "- The startup signed several enterprise pilots.",
+                "narrative bullet",
+            ),
+            (
+                "- Company 1 reports $2M ARR. [refs: traction-1]",
+                "The startup signed several enterprise pilots.",
+                "structured bullet",
+            ),
+        )
+        for old, new, phrase in mutations:
+            with self.subTest(new=new), tempfile.TemporaryDirectory() as directory:
+                run_dir = self.make_complete_run(Path(directory))
+                analysis_path = run_dir / "companies" / "company-1" / "analysis.md"
+                analysis_path.write_text(
+                    analysis_path.read_text(encoding="utf-8").replace(old, new),
+                    encoding="utf-8",
+                )
+
+                result = self.run_module.validate_run(run_dir)
+
+            self.assertFalse(result["valid"], result)
+            self.assertTrue(any(phrase in error.lower() for error in result["errors"]))
 
     def test_missing_exact_risks_heading_fails(self):
         with tempfile.TemporaryDirectory() as directory:

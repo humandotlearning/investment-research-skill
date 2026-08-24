@@ -67,7 +67,7 @@ class CliContractTests(unittest.TestCase):
                 json.dumps({
                     "seed": {"type": "topic", "value": "Workflow AI"},
                     "sourcing": {"target_count": 10},
-                    "research": {"limit": 1},
+                    "research": {"full_coverage": True},
                 }),
                 encoding="utf-8",
             )
@@ -155,7 +155,7 @@ class CliContractTests(unittest.TestCase):
             input_data = {
                 "seed": {"type": "topic", "value": "Vertical workflow software"},
                 "sourcing": {"target_count": 10},
-                "research": {"limit": 2},
+                "research": {"full_coverage": True},
             }
             input_path.write_text(json.dumps(input_data), encoding="utf-8")
             thesis_path.write_text("Back durable workflow automation.", encoding="utf-8")
@@ -194,6 +194,7 @@ class CliContractTests(unittest.TestCase):
         self.assertEqual(payload["requested_count"], 10)
         self.assertEqual(payload["actual_count"], 10)
         self.assertEqual(len(payload["candidates"]), 10)
+        self.assertTrue(all(candidate["selected_for_research"] for candidate in payload["candidates"]))
         self.assertEqual(len(payload["excluded"]), 2)
         self.assertTrue(all(exclusion["origins"] for exclusion in payload["excluded"]))
         self.assertTrue(all("requested count" in exclusion["reason"] for exclusion in payload["excluded"]))

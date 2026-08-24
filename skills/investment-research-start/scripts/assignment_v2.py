@@ -71,14 +71,11 @@ def normalize_input(value: dict) -> dict:
     if not isinstance(signal_sources, list) or signal_sources != list(SIGNAL_SOURCES):
         raise ValueError("sourcing.signal_sources must contain only hacker_news")
     full_coverage = research.get("full_coverage", True)
-    if not isinstance(full_coverage, bool):
-        raise ValueError("research.full_coverage must be boolean")
-    normalized_research = {"full_coverage": full_coverage}
+    if full_coverage is not True:
+        raise ValueError("research.full_coverage must be exactly true")
     if "limit" in research:
-        research_limit = research["limit"]
-        if isinstance(research_limit, bool) or not isinstance(research_limit, int) or not 1 <= research_limit <= target_count:
-            raise ValueError("research.limit must be from 1 through sourcing.target_count")
-        normalized_research["limit"] = research_limit
+        raise ValueError("research.limit is not allowed for assignment-v2 full coverage")
+    normalized_research = {"full_coverage": True}
     watch_min = thresholds.get("watch_min", 65)
     meeting_min = thresholds.get("meeting_min", 80)
     if not all(isinstance(item, int) and not isinstance(item, bool) for item in (watch_min, meeting_min)):
