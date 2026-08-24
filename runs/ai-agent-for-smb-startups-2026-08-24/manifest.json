@@ -1,0 +1,389 @@
+{
+  "version": 2,
+  "run_id": "ai-agent-for-smb-startups-2026-08-24",
+  "created_at": "2026-08-24T10:05:54.652406Z",
+  "updated_at": "2026-08-24T10:36:22.689707Z",
+  "input_fingerprint": "19c388b89d1ccebaa43046a61903918d4def493a729b9e22ba6bc911c10c812b",
+  "rubric_fingerprint": "b859cfe1ac2060f4f77576c07e13f35c184939a8c9a7b20cffd76bd705dbc5c4",
+  "flow_fingerprint": "f49cd006aedb1fa9ebe174287eb8c7ef9eb53c7aa2bb041b84d45a96be945555",
+  "supersedes_run_id": null,
+  "supersedes_run_path": null,
+  "superseded_by": null,
+  "stages": {
+    "sourcing": {
+      "status": "completed",
+      "attempt_count": 1,
+      "provider": "source_snapshots",
+      "exit_code": 0,
+      "error": null,
+      "artifacts": [
+        "sourcing/candidates.json",
+        "sourcing/retrieval.json"
+      ],
+      "completed_at": "2026-08-24T10:06:28.461996Z"
+    }
+  },
+  "companies": {
+    "withasync": {
+      "research": {
+        "status": "completed",
+        "attempt_count": 2,
+        "provider": "web",
+        "exit_code": 0,
+        "error": null,
+        "artifacts": [
+          "companies/withasync/evidence.json"
+        ],
+        "completed_at": "2026-08-24T10:36:01.039340Z"
+      },
+      "analysis": {
+        "status": "completed",
+        "attempt_count": 1,
+        "provider": null,
+        "exit_code": null,
+        "error": null,
+        "artifacts": [
+          "companies/withasync/analysis.md"
+        ],
+        "completed_at": "2026-08-24T10:29:39.981021Z"
+      },
+      "memo": {
+        "status": "completed",
+        "attempt_count": 1,
+        "provider": null,
+        "exit_code": null,
+        "error": null,
+        "artifacts": [
+          "companies/withasync/memo.md"
+        ],
+        "completed_at": "2026-08-24T10:34:53.388729Z"
+      }
+    },
+    "getbalance": {
+      "research": {
+        "status": "completed",
+        "attempt_count": 2,
+        "provider": "web",
+        "exit_code": 0,
+        "error": null,
+        "artifacts": [
+          "companies/getbalance/evidence.json"
+        ],
+        "completed_at": "2026-08-24T10:36:01.583483Z"
+      },
+      "analysis": {
+        "status": "completed",
+        "attempt_count": 1,
+        "provider": null,
+        "exit_code": null,
+        "error": null,
+        "artifacts": [
+          "companies/getbalance/analysis.md"
+        ],
+        "completed_at": "2026-08-24T10:29:40.376775Z"
+      },
+      "memo": {
+        "status": "completed",
+        "attempt_count": 1,
+        "provider": null,
+        "exit_code": null,
+        "error": null,
+        "artifacts": [
+          "companies/getbalance/memo.md"
+        ],
+        "completed_at": "2026-08-24T10:34:53.729024Z"
+      }
+    },
+    "cotera": {
+      "research": {
+        "status": "completed",
+        "attempt_count": 2,
+        "provider": "web",
+        "exit_code": 0,
+        "error": null,
+        "artifacts": [
+          "companies/cotera/evidence.json"
+        ],
+        "completed_at": "2026-08-24T10:36:02.095022Z"
+      },
+      "analysis": {
+        "status": "completed",
+        "attempt_count": 1,
+        "provider": null,
+        "exit_code": null,
+        "error": null,
+        "artifacts": [
+          "companies/cotera/analysis.md"
+        ],
+        "completed_at": "2026-08-24T10:29:40.672142Z"
+      },
+      "memo": {
+        "status": "completed",
+        "attempt_count": 1,
+        "provider": null,
+        "exit_code": null,
+        "error": null,
+        "artifacts": [
+          "companies/cotera/memo.md"
+        ],
+        "completed_at": "2026-08-24T10:34:53.990403Z"
+      }
+    },
+    "duckie": {
+      "research": {
+        "status": "completed",
+        "attempt_count": 2,
+        "provider": "web",
+        "exit_code": 0,
+        "error": null,
+        "artifacts": [
+          "companies/duckie/evidence.json"
+        ],
+        "completed_at": "2026-08-24T10:36:02.606846Z"
+      },
+      "analysis": {
+        "status": "completed",
+        "attempt_count": 1,
+        "provider": null,
+        "exit_code": null,
+        "error": null,
+        "artifacts": [
+          "companies/duckie/analysis.md"
+        ],
+        "completed_at": "2026-08-24T10:29:40.921863Z"
+      },
+      "memo": {
+        "status": "completed",
+        "attempt_count": 1,
+        "provider": null,
+        "exit_code": null,
+        "error": null,
+        "artifacts": [
+          "companies/duckie/memo.md"
+        ],
+        "completed_at": "2026-08-24T10:34:54.255470Z"
+      }
+    },
+    "fini": {
+      "research": {
+        "status": "completed",
+        "attempt_count": 2,
+        "provider": "web",
+        "exit_code": 0,
+        "error": null,
+        "artifacts": [
+          "companies/fini/evidence.json"
+        ],
+        "completed_at": "2026-08-24T10:36:03.037465Z"
+      },
+      "analysis": {
+        "status": "completed",
+        "attempt_count": 1,
+        "provider": null,
+        "exit_code": null,
+        "error": null,
+        "artifacts": [
+          "companies/fini/analysis.md"
+        ],
+        "completed_at": "2026-08-24T10:29:41.170236Z"
+      },
+      "memo": {
+        "status": "completed",
+        "attempt_count": 1,
+        "provider": null,
+        "exit_code": null,
+        "error": null,
+        "artifacts": [
+          "companies/fini/memo.md"
+        ],
+        "completed_at": "2026-08-24T10:34:54.557939Z"
+      }
+    },
+    "leaping-ai": {
+      "research": {
+        "status": "completed",
+        "attempt_count": 2,
+        "provider": "web",
+        "exit_code": 0,
+        "error": null,
+        "artifacts": [
+          "companies/leaping-ai/evidence.json"
+        ],
+        "completed_at": "2026-08-24T10:36:03.551063Z"
+      },
+      "analysis": {
+        "status": "completed",
+        "attempt_count": 1,
+        "provider": null,
+        "exit_code": null,
+        "error": null,
+        "artifacts": [
+          "companies/leaping-ai/analysis.md"
+        ],
+        "completed_at": "2026-08-24T10:29:41.413292Z"
+      },
+      "memo": {
+        "status": "completed",
+        "attempt_count": 1,
+        "provider": null,
+        "exit_code": null,
+        "error": null,
+        "artifacts": [
+          "companies/leaping-ai/memo.md"
+        ],
+        "completed_at": "2026-08-24T10:34:54.803596Z"
+      }
+    },
+    "open": {
+      "research": {
+        "status": "completed",
+        "attempt_count": 2,
+        "provider": "web",
+        "exit_code": 0,
+        "error": null,
+        "artifacts": [
+          "companies/open/evidence.json"
+        ],
+        "completed_at": "2026-08-24T10:36:04.028089Z"
+      },
+      "analysis": {
+        "status": "completed",
+        "attempt_count": 1,
+        "provider": null,
+        "exit_code": null,
+        "error": null,
+        "artifacts": [
+          "companies/open/analysis.md"
+        ],
+        "completed_at": "2026-08-24T10:29:41.688300Z"
+      },
+      "memo": {
+        "status": "completed",
+        "attempt_count": 1,
+        "provider": null,
+        "exit_code": null,
+        "error": null,
+        "artifacts": [
+          "companies/open/memo.md"
+        ],
+        "completed_at": "2026-08-24T10:34:55.152429Z"
+      }
+    },
+    "parahelp": {
+      "research": {
+        "status": "completed",
+        "attempt_count": 2,
+        "provider": "web",
+        "exit_code": 0,
+        "error": null,
+        "artifacts": [
+          "companies/parahelp/evidence.json"
+        ],
+        "completed_at": "2026-08-24T10:36:04.501364Z"
+      },
+      "analysis": {
+        "status": "completed",
+        "attempt_count": 1,
+        "provider": null,
+        "exit_code": null,
+        "error": null,
+        "artifacts": [
+          "companies/parahelp/analysis.md"
+        ],
+        "completed_at": "2026-08-24T10:29:41.902319Z"
+      },
+      "memo": {
+        "status": "completed",
+        "attempt_count": 1,
+        "provider": null,
+        "exit_code": null,
+        "error": null,
+        "artifacts": [
+          "companies/parahelp/memo.md"
+        ],
+        "completed_at": "2026-08-24T10:34:55.380360Z"
+      }
+    },
+    "robby": {
+      "research": {
+        "status": "completed",
+        "attempt_count": 2,
+        "provider": "web",
+        "exit_code": 0,
+        "error": null,
+        "artifacts": [
+          "companies/robby/evidence.json"
+        ],
+        "completed_at": "2026-08-24T10:36:05.028172Z"
+      },
+      "analysis": {
+        "status": "completed",
+        "attempt_count": 1,
+        "provider": null,
+        "exit_code": null,
+        "error": null,
+        "artifacts": [
+          "companies/robby/analysis.md"
+        ],
+        "completed_at": "2026-08-24T10:30:26.995402Z"
+      },
+      "memo": {
+        "status": "completed",
+        "attempt_count": 1,
+        "provider": null,
+        "exit_code": null,
+        "error": null,
+        "artifacts": [
+          "companies/robby/memo.md"
+        ],
+        "completed_at": "2026-08-24T10:34:55.648404Z"
+      }
+    },
+    "yuma-ai": {
+      "research": {
+        "status": "completed",
+        "attempt_count": 2,
+        "provider": "web",
+        "exit_code": 0,
+        "error": null,
+        "artifacts": [
+          "companies/yuma-ai/evidence.json"
+        ],
+        "completed_at": "2026-08-24T10:36:05.580242Z"
+      },
+      "analysis": {
+        "status": "completed",
+        "attempt_count": 1,
+        "provider": null,
+        "exit_code": null,
+        "error": null,
+        "artifacts": [
+          "companies/yuma-ai/analysis.md"
+        ],
+        "completed_at": "2026-08-24T10:29:42.384304Z"
+      },
+      "memo": {
+        "status": "completed",
+        "attempt_count": 1,
+        "provider": null,
+        "exit_code": null,
+        "error": null,
+        "artifacts": [
+          "companies/yuma-ai/memo.md"
+        ],
+        "completed_at": "2026-08-24T10:34:55.850849Z"
+      }
+    }
+  },
+  "validation": {
+    "status": "completed",
+    "attempt_count": 1,
+    "provider": null,
+    "exit_code": null,
+    "error": null,
+    "artifacts": [
+      "run-summary.md"
+    ],
+    "completed_at": "2026-08-24T10:36:22.689707Z"
+  }
+}

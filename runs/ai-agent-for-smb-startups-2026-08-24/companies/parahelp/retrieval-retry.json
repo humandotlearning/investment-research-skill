@@ -1,0 +1,12 @@
+{
+  "query": "Native web research for Parahelp investment evidence: team, product, market, traction, competitors, freshness",
+  "provider": "web",
+  "retrieved_at": "2026-08-24T00:00:00Z",
+  "status": "ok",
+  "exit_code": 0,
+  "missing_categories": ["team", "product", "market", "traction", "competitors", "freshness"],
+  "results": [
+    {"title": "Parahelp: Build an AI support agent that securely uses all your tools | Y Combinator", "url": "https://www.ycombinator.com/companies/parahelp", "published_date": "Summer 2024", "highlights": ["Parahelp connects support agents to tools such as Stripe, Retool, Linear, Intercom, and Zendesk; YC reports a case study in which it resolved 46% of support tickets within seven days." ]},
+    {"title": "Parahelp official website", "url": "https://parahelp.com", "published_date": null, "highlights": ["Official company website for Parahelp." ]}
+  ]
+}

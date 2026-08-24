@@ -1,0 +1,1 @@
+{"query":"unavailable","provider":"exa","retrieved_at":"2026-08-24T10:08:58.051846Z","status":"failed","exit_code":4,"error":"EXA_API_KEY is unavailable; use the native web fallback","stderr":"EXA_API_KEY is unavailable; use the native web fallback","missing_categories":[],"results":[]}

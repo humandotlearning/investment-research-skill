@@ -1,0 +1,19 @@
+{
+  "company": {"name": "Open", "slug": "open", "website": "https://open.cx"},
+  "coverage": {"team": "present", "product": "present", "market": "present", "traction": "present", "competitors": "missing", "freshness": "present"},
+  "missing_categories": ["competitors"],
+  "unresolved_gaps": ["competitors"],
+  "initial_coverage": {"team": "missing", "product": "missing", "market": "missing", "traction": "missing", "competitors": "missing", "freshness": "missing"},
+  "initial_missing_categories": ["team", "product", "market", "traction", "competitors", "freshness"],
+  "retrievals": [
+    {"artifact_path": "companies/open/retrieval-initial.json", "provider": "exa", "query": "unavailable", "retrieved_at": "2026-08-24T10:08:59.309418Z", "status": "failed", "exit_code": 4},
+    {"artifact_path": "companies/open/retrieval-retry.json", "provider": "web", "query": "Native web research for Open investment evidence: team, product, market, traction, competitors, freshness", "retrieved_at": "2026-08-24T00:00:00Z", "status": "ok", "exit_code": 0, "missing_categories": ["team", "product", "market", "traction", "competitors", "freshness"]}
+  ],
+  "claims": [
+    {"id": "open-team", "area": "team", "claim": "YC identifies Mohammad Gharbat as the founder and describes a team including programming-language builders, a cybersecurity competition winner, and a dentist.", "claim_type": "verified_fact", "source_url": "https://www.ycombinator.com/companies/open", "source_quality": "primary_record", "confidence": "high"},
+    {"id": "open-product", "area": "product", "claim": "Open says it trains AI agents from more than 27 sources and deploys them across web, email, phone, SMS, WhatsApp, and Slack for complex support workflows.", "claim_type": "company_claim", "source_url": "https://open.cx", "source_quality": "first_party", "confidence": "medium"},
+    {"id": "open-market", "area": "market", "claim": "Omnichannel support is a recurring operational need, but Open explicitly targets enterprises and high-growth businesses with more than 5,000 support tickets per month.", "claim_type": "company_claim", "source_url": "https://open.cx", "source_quality": "first_party", "confidence": "medium"},
+    {"id": "open-traction", "area": "traction", "claim": "Open says customers have processed and resolved thousands of complex issues and names production customers including Print.com, Mollie.com, Viva.com, and More.com.", "claim_type": "company_claim", "source_url": "https://open.cx", "source_quality": "first_party", "confidence": "medium"},
+    {"id": "open-freshness", "area": "freshness", "claim": "YC lists Open as active in the Winter 2024 batch with 21 employees and reports a January 2025 funding announcement.", "claim_type": "verified_fact", "source_url": "https://www.ycombinator.com/companies/open", "source_quality": "primary_record", "confidence": "high"}
+  ]
+}

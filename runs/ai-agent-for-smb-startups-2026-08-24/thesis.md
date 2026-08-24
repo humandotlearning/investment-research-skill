@@ -1,0 +1,3 @@
+# AI agents for SMB startups
+
+Back AI-agent startups that serve small and medium-sized businesses by automating recurring, high-value workflows or expanding revenue capacity. Prefer companies with a clear vertical wedge, deep integration into existing SMB systems, and evidence that agents complete work rather than only generate text. Favor credible teams with relevant operating or technical experience, large and durable labor-spend markets, early customer adoption or measurable outcomes, and a path to repeatable distribution. Penalize generic horizontal assistants, weak workflow ownership, unclear customer ROI, and evidence gaps around team, product, market, traction, or freshness.

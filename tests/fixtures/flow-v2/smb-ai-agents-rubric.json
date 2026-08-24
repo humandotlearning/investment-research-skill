@@ -1,0 +1,61 @@
+{
+  "version": 2,
+  "total_weight": 100,
+  "categories": [
+    {
+      "name": "Growth potential and momentum",
+      "weight": 30,
+      "evidence_areas": ["traction", "freshness"],
+      "company_claim_cap": 10,
+      "anchors": {
+        "0": "No credible SMB agent growth or workflow momentum evidence.",
+        "10": "Partial SMB agent momentum evidence supports the workflow thesis.",
+        "20": "Independent evidence supports strong SMB agent workflow momentum."
+      }
+    },
+    {
+      "name": "Market size and expansion path",
+      "weight": 30,
+      "evidence_areas": ["market"],
+      "company_claim_cap": 10,
+      "anchors": {
+        "0": "No credible SMB market expansion evidence for the agent thesis.",
+        "10": "A plausible SMB market expansion path appears in the agent thesis.",
+        "20": "Independent evidence supports a large expandable SMB market for agent workflows."
+      }
+    },
+    {
+      "name": "Product differentiation and defensibility",
+      "weight": 20,
+      "evidence_areas": ["product", "competitors"],
+      "company_claim_cap": null,
+      "anchors": {
+        "0": "No differentiated SMB agent workflow evidence is present.",
+        "10": "The SMB agent product appears differentiated in the workflow thesis.",
+        "20": "Independent evidence supports durable SMB agent workflow differentiation."
+      }
+    },
+    {
+      "name": "SMB problem intensity and adoption fit",
+      "weight": 15,
+      "evidence_areas": ["market", "product"],
+      "company_claim_cap": 10,
+      "anchors": {
+        "0": "No evidence of urgent SMB pain or adoption fit for the agent thesis.",
+        "10": "A plausible SMB pain and workflow adoption path appears in the agent thesis.",
+        "20": "Independent evidence supports acute SMB pain and adoption fit for agent workflows."
+      }
+    },
+    {
+      "name": "Execution risk and capital efficiency",
+      "weight": 5,
+      "evidence_areas": ["team", "traction"],
+      "company_claim_cap": 5,
+      "anchors": {
+        "0": "No execution evidence supports the SMB agent workflow thesis.",
+        "10": "Partial evidence suggests capable SMB agent execution for the workflow thesis.",
+        "20": "Independent evidence supports efficient SMB agent workflow execution."
+      }
+    }
+  ]
+}

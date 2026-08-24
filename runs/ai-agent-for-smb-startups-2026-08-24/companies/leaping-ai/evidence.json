@@ -1,0 +1,19 @@
+{
+  "company": {"name": "Leaping AI", "slug": "leaping-ai", "website": "https://www.leapingai.com"},
+  "coverage": {"team": "present", "product": "present", "market": "present", "traction": "present", "competitors": "missing", "freshness": "present"},
+  "missing_categories": ["competitors"],
+  "unresolved_gaps": ["competitors"],
+  "initial_coverage": {"team": "missing", "product": "missing", "market": "missing", "traction": "missing", "competitors": "missing", "freshness": "missing"},
+  "initial_missing_categories": ["team", "product", "market", "traction", "competitors", "freshness"],
+  "retrievals": [
+    {"artifact_path": "companies/leaping-ai/retrieval-initial.json", "provider": "exa", "query": "unavailable", "retrieved_at": "2026-08-24T10:08:58.969214Z", "status": "failed", "exit_code": 4},
+    {"artifact_path": "companies/leaping-ai/retrieval-retry.json", "provider": "web", "query": "Native web research for Leaping AI investment evidence: team, product, market, traction, competitors, freshness", "retrieved_at": "2026-08-24T00:00:00Z", "status": "ok", "exit_code": 0, "missing_categories": ["team", "product", "market", "traction", "competitors", "freshness"]}
+  ],
+  "claims": [
+    {"id": "leaping-team", "area": "team", "claim": "YC lists founder Kevin Wu with computer-science training and prior BCG experience, and the company says its team includes people from Microsoft and IBM Research.", "claim_type": "verified_fact", "source_url": "https://www.ycombinator.com/companies/leaping-ai", "source_quality": "primary_record", "confidence": "high"},
+    {"id": "leaping-product", "area": "product", "claim": "Leaping AI offers multi-stage voice and texting agents with CRM integrations, multilingual support, appointment scheduling, and post-call self-improvement.", "claim_type": "company_claim", "source_url": "https://www.leapingai.com", "source_quality": "first_party", "confidence": "medium"},
+    {"id": "leaping-market", "area": "market", "claim": "Home remodeling, roofing, retail, travel, health insurance, Medicare, and real estate all have repetitive high-volume calling workflows, but the company targets mid-market and enterprise accounts.", "claim_type": "inference", "source_url": "https://www.ycombinator.com/companies/leaping-ai", "source_quality": "primary_record", "confidence": "medium"},
+    {"id": "leaping-traction", "area": "traction", "claim": "Leaping AI claims thousands of calls daily, including a retailer processing more than 1,000 calls per day and a BPO processing more than 5,000 calls per day.", "claim_type": "company_claim", "source_url": "https://www.leapingai.com", "source_quality": "first_party", "confidence": "medium"},
+    {"id": "leaping-freshness", "area": "freshness", "claim": "YC lists Leaping AI as active in the Winter 2025 batch with 13 employees.", "claim_type": "verified_fact", "source_url": "https://www.ycombinator.com/companies/leaping-ai", "source_quality": "primary_record", "confidence": "high"}
+  ]
+}

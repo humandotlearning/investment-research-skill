@@ -1,0 +1,19 @@
+{
+  "company": {"name": "Async", "slug": "withasync", "website": "https://withasync.com"},
+  "coverage": {"team": "present", "product": "present", "market": "present", "traction": "present", "competitors": "missing", "freshness": "present"},
+  "missing_categories": ["competitors"],
+  "unresolved_gaps": ["competitors"],
+  "initial_coverage": {"team": "missing", "product": "missing", "market": "missing", "traction": "missing", "competitors": "missing", "freshness": "missing"},
+  "initial_missing_categories": ["team", "product", "market", "traction", "competitors", "freshness"],
+  "retrievals": [
+    {"artifact_path": "companies/withasync/retrieval-initial.json", "provider": "exa", "query": "unavailable", "retrieved_at": "2026-08-24T10:08:57.670203Z", "status": "failed", "exit_code": 4},
+    {"artifact_path": "companies/withasync/retrieval-retry.json", "provider": "web", "query": "Native web research for Async investment evidence: team, product, market, traction, competitors, freshness", "retrieved_at": "2026-08-24T00:00:00Z", "status": "ok", "exit_code": 0, "missing_categories": ["team", "product", "market", "traction", "competitors", "freshness"]}
+  ],
+  "claims": [
+    {"id": "async-team", "area": "team", "claim": "YC lists two active founders, including a technical co-founder with a University of Michigan computer-science background.", "claim_type": "verified_fact", "source_url": "https://www.ycombinator.com/companies/withasync", "source_quality": "primary_record", "confidence": "high"},
+    {"id": "async-product", "area": "product", "claim": "Async says it deploys configurable specialized agents on top of legacy systems to complete scheduling, legal-document drafting, and data-entry workflows.", "claim_type": "company_claim", "source_url": "https://withasync.com", "source_quality": "first_party", "confidence": "medium"},
+    {"id": "async-market", "area": "market", "claim": "The stated customer verticals—law, healthcare, real estate, and childcare—represent recurring operational work where SMB owners otherwise need additional headcount.", "claim_type": "inference", "source_url": "https://www.ycombinator.com/companies/withasync", "source_quality": "primary_record", "confidence": "medium"},
+    {"id": "async-traction", "area": "traction", "claim": "Async claims to have automated thousands of hours of work for small businesses, but customer count and revenue are not disclosed.", "claim_type": "company_claim", "source_url": "https://withasync.com", "source_quality": "first_party", "confidence": "low"},
+    {"id": "async-freshness", "area": "freshness", "claim": "YC lists Async as active in the Summer 2026 batch.", "claim_type": "verified_fact", "source_url": "https://www.ycombinator.com/companies/withasync", "source_quality": "primary_record", "confidence": "high"}
+  ]
+}

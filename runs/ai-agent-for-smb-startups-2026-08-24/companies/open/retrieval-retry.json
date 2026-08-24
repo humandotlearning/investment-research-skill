@@ -1,0 +1,12 @@
+{
+  "query": "Native web research for Open investment evidence: team, product, market, traction, competitors, freshness",
+  "provider": "web",
+  "retrieved_at": "2026-08-24T00:00:00Z",
+  "status": "ok",
+  "exit_code": 0,
+  "missing_categories": ["team", "product", "market", "traction", "competitors", "freshness"],
+  "results": [
+    {"title": "Open: Enterprise AI customer support | Y Combinator", "url": "https://www.ycombinator.com/companies/open", "published_date": "Winter 2024", "highlights": ["Open provides AI customer support across web, email, phone, SMS, WhatsApp, and Slack; YC says customers have processed thousands of complex issues and lists production customers." ]},
+    {"title": "Open official website", "url": "https://open.cx", "published_date": null, "highlights": ["Official company website for Open.cx." ]}
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "query": "Native web research for Cotera investment evidence: team, product, market, traction, competitors, freshness",
+  "provider": "web",
+  "retrieved_at": "2026-08-24T00:00:00Z",
+  "status": "ok",
+  "exit_code": 0,
+  "missing_categories": ["team", "product", "market", "traction", "competitors", "freshness"],
+  "results": [
+    {"title": "Cotera: The fastest way to build an AI agent | Y Combinator", "url": "https://www.ycombinator.com/companies/cotera", "published_date": "Winter 2022", "highlights": ["Cotera connects agents to data warehouses and APIs with a visual workflow editor; YC lists customers including Bilt, Peloton, Skims, OpenSea, Coterie, and Shippo." ]},
+    {"title": "Cotera official website", "url": "https://cotera.co", "published_date": null, "highlights": ["Official company website for Cotera." ]}
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "company": {"name": "Cotera", "slug": "cotera", "website": "https://cotera.co"},
+  "coverage": {"team": "present", "product": "present", "market": "present", "traction": "present", "competitors": "missing", "freshness": "present"},
+  "missing_categories": ["competitors"],
+  "unresolved_gaps": ["competitors"],
+  "initial_coverage": {"team": "missing", "product": "missing", "market": "missing", "traction": "missing", "competitors": "missing", "freshness": "missing"},
+  "initial_missing_categories": ["team", "product", "market", "traction", "competitors", "freshness"],
+  "retrievals": [
+    {"artifact_path": "companies/cotera/retrieval-initial.json", "provider": "exa", "query": "unavailable", "retrieved_at": "2026-08-24T10:08:58.345544Z", "status": "failed", "exit_code": 4},
+    {"artifact_path": "companies/cotera/retrieval-retry.json", "provider": "web", "query": "Native web research for Cotera investment evidence: team, product, market, traction, competitors, freshness", "retrieved_at": "2026-08-24T00:00:00Z", "status": "ok", "exit_code": 0, "missing_categories": ["team", "product", "market", "traction", "competitors", "freshness"]}
+  ],
+  "claims": [
+    {"id": "cotera-team", "area": "team", "claim": "YC identifies Tom Firth as a founder and describes him as a former founder building Cotera in New York.", "claim_type": "verified_fact", "source_url": "https://www.ycombinator.com/companies/cotera", "source_quality": "primary_record", "confidence": "high"},
+    {"id": "cotera-product", "area": "product", "claim": "Cotera provides a visual workflow editor, data-warehouse and API connections, and agents that can take actions across company systems.", "claim_type": "company_claim", "source_url": "https://cotera.co", "source_quality": "first_party", "confidence": "medium"},
+    {"id": "cotera-market", "area": "market", "claim": "Cotera targets go-to-market and operations teams automating busy work, which can include smaller teams but is not explicitly SMB-focused.", "claim_type": "company_claim", "source_url": "https://cotera.co", "source_quality": "first_party", "confidence": "medium"},
+    {"id": "cotera-traction", "area": "traction", "claim": "YC lists several recognizable customers, but the available record does not disclose customer count, revenue, retention, or workflow-level ROI.", "claim_type": "company_claim", "source_url": "https://cotera.co", "source_quality": "first_party", "confidence": "low"},
+    {"id": "cotera-freshness", "area": "freshness", "claim": "YC lists Cotera as active in the Winter 2022 batch and shows current hiring activity.", "claim_type": "verified_fact", "source_url": "https://www.ycombinator.com/companies/cotera", "source_quality": "primary_record", "confidence": "high"}
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "version": 2,
+  "total_weight": 100,
+  "thesis_fingerprint": "0225beddc4d63b9e1fee46fb3bcff4dd84e644f9d95c8fc01d0c54f54022dc69",
+  "categories": [
+    {
+      "name": "Team",
+      "weight": 20,
+      "anchors": {
+        "0": "No credible evidence of a team able to build AI agents for SMB workflows.",
+        "10": "Some relevant technical or operating experience, but limited evidence of SMB workflow expertise.",
+        "20": "Strong technical and operating team with direct evidence relevant to AI agents and SMB workflows."
+      }
+    },
+    {
+      "name": "Product differentiation",
+      "weight": 20,
+      "anchors": {
+        "0": "Generic AI assistant with no demonstrated SMB workflow ownership or differentiation.",
+        "10": "A useful AI agent or workflow product with some SMB relevance but limited defensibility.",
+        "20": "Clearly differentiated AI agents that complete high-value SMB workflows through deep integrations or a strong vertical wedge."
+      }
+    },
+    {
+      "name": "Market",
+      "weight": 20,
+      "anchors": {
+        "0": "Narrow or poorly evidenced market with no clear SMB labor-spend opportunity.",
+        "10": "Plausible SMB market and recurring workflow pain, but scale or durability is only partly evidenced.",
+        "20": "Large, durable SMB market with recurring high-value workflows and a clear path to repeatable distribution."
+      }
+    },
+    {
+      "name": "Traction",
+      "weight": 20,
+      "anchors": {
+        "0": "No credible evidence that customers use the AI agents or receive measurable SMB outcomes.",
+        "10": "Early customer or usage evidence exists, but measurable workflow or revenue outcomes remain limited.",
+        "20": "Strong evidence of recurring SMB adoption, completed agent work, measurable ROI, or durable customer pull."
+      }
+    },
+    {
+      "name": "Thesis alignment",
+      "weight": 20,
+      "anchors": {
+        "0": "Primarily a generic AI product and not focused on SMB workflows or revenue capacity.",
+        "10": "Some AI-agent and SMB relevance, but the vertical wedge or workflow ownership is incomplete.",
+        "20": "Directly matches the thesis: differentiated AI agents automate recurring SMB workflows or expand SMB revenue capacity."
+      }
+    }
+  ]
+}

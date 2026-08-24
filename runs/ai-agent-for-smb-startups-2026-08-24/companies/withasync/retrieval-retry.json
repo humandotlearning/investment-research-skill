@@ -1,0 +1,12 @@
+{
+  "query": "Native web research for Async investment evidence: team, product, market, traction, competitors, freshness",
+  "provider": "web",
+  "retrieved_at": "2026-08-24T00:00:00Z",
+  "status": "ok",
+  "exit_code": 0,
+  "missing_categories": ["team", "product", "market", "traction", "competitors", "freshness"],
+  "results": [
+    {"title": "Async: AI agents that run small businesses | Y Combinator", "url": "https://www.ycombinator.com/companies/withasync", "published_date": "Summer 2026", "highlights": ["Async deploys specialized AI agents for law firms, healthcare clinics, real estate companies, and childcare facilities; YC describes agents completing scheduling, legal drafting, and legacy-system data entry." ]},
+    {"title": "Async official website", "url": "https://withasync.com", "published_date": null, "highlights": ["Official company website for Async." ]}
+  ]
+}
