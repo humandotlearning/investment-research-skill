@@ -59,19 +59,19 @@ The helpers never print or persist the key. They do not install dependencies. Cu
 
 ```text
 runs/<run-id>/
-├── input.json
-├── thesis.md
-├── manifest.json
+├── input.json                         # normalized run configuration and research seed
+├── thesis.md                          # investment thesis used to evaluate companies
+├── manifest.json                      # run lifecycle state, fingerprints, and artifact records
 ├── sourcing/
-│   ├── retrieval.json
-│   └── candidates.json
+│   ├── retrieval.json                 # raw sourcing retrieval envelope and provider metadata
+│   └── candidates.json                # normalized candidate companies selected for research
 ├── companies/<slug>/
-│   ├── retrieval-initial.json
-│   ├── retrieval-retry.json
-│   ├── evidence.json
-│   ├── analysis.md
-│   └── memo.md
-└── run-summary.md
+│   ├── retrieval-initial.json         # initial company-specific retrieval envelope
+│   ├── retrieval-retry.json           # targeted retry retrieval envelope, when needed
+│   ├── evidence.json                  # normalized evidence supporting the company research
+│   ├── analysis.md                    # scored analysis against the investment rubric
+│   └── memo.md                        # concise company decision memo
+└── run-summary.md                     # validated run-level decisions, gaps, retries, and failures
 ```
 
 `retrieval-retry.json` exists only when one targeted retry was necessary.
