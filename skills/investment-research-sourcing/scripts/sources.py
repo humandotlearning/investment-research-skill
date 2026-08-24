@@ -331,7 +331,11 @@ def normalize_candidates(records: list[dict]) -> tuple[list[dict], list[dict]]:
     for record in records:
         reason = _record_reason(record)
         if reason:
-            excluded.append({"reason": reason, "origins": copy.deepcopy(record.get("origins", [])) if isinstance(record, dict) else []})
+            excluded.append({
+                "name": record.get("name") if isinstance(record, dict) else None,
+                "reason": reason,
+                "origins": copy.deepcopy(record.get("origins", [])) if isinstance(record, dict) else [],
+            })
         else:
             accepted.append(copy.deepcopy(record))
     groups: list[list[dict]] = []
@@ -347,7 +351,11 @@ def normalize_candidates(records: list[dict]) -> tuple[list[dict], list[dict]]:
         if candidate["website"]:
             candidates.append(candidate)
         else:
-            excluded.append({"reason": "missing required candidate field", "origins": candidate["origins"]})
+            excluded.append({
+                "name": candidate.get("name"),
+                "reason": "missing required candidate field",
+                "origins": candidate["origins"],
+            })
     candidates.sort(key=lambda candidate: (_normalized_name(candidate["name"]), candidate["slug"], candidate["website"]))
     for rank, candidate in enumerate(candidates, start=1):
         candidate["rank"] = rank

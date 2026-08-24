@@ -29,6 +29,7 @@ STAGES = {"sourcing", "research", "analysis", "memo", "validation"}
 CATEGORIES = ("team", "product", "market", "traction", "competitors", "freshness")
 CLAIM_TYPES = {"verified_fact", "company_claim", "secondary_report", "inference", "unknown"}
 SOURCE_QUALITIES = {"first_party", "primary_record", "credible_secondary", "unknown"}
+PROVIDERS = {"exa", "web", "source_snapshots"}
 CONFIDENCES = {"high", "medium", "low"}
 SCORE_LABELS = (
     "Team",
@@ -646,7 +647,7 @@ def _validate_retrieval(
     for field in ("query", "provider", "retrieved_at", "status", "exit_code", "results"):
         if field not in value:
             errors.append(f"{label} missing {field}")
-    if value.get("provider") not in {"exa", "web"}:
+    if value.get("provider") not in PROVIDERS:
         errors.append(f"{label} has invalid provider: {value.get('provider')}")
     if value.get("status") not in {"ok", "failed", "partial"}:
         errors.append(f"{label} has invalid status: {value.get('status')}")
@@ -717,7 +718,7 @@ def _validate_manifest(run_dir: Path, manifest: dict, errors: list[str]) -> None
             errors.append(f"manifest attempt_count is invalid for {label}")
         if stage == "research" and isinstance(attempts, int) and attempts > 2:
             errors.append(f"research attempts exceed initial pass plus one retry for {label}")
-        if record.get("provider") not in {None, "exa", "web"}:
+        if record.get("provider") not in {None, *PROVIDERS}:
             errors.append(f"manifest provider is invalid for {label}")
         exit_code = record.get("exit_code")
         if exit_code is not None and (
@@ -922,7 +923,7 @@ def _validate_new(run_dir: Path) -> dict:
     for field in ("provider", "query", "retrieval_path", "requested_count", "actual_count"):
         if field not in sourcing:
             errors.append(f"candidates missing {field}")
-    if sourcing.get("provider") not in {"exa", "web"}:
+    if sourcing.get("provider") not in PROVIDERS:
         errors.append(f"candidates has invalid provider: {sourcing.get('provider')}")
     if sourcing.get("retrieval_path") != "sourcing/retrieval.json":
         errors.append("candidates retrieval_path must be sourcing/retrieval.json")
@@ -1298,7 +1299,7 @@ def build_parser() -> argparse.ArgumentParser:
     stage_parser.add_argument("--stage", choices=sorted(STAGES), required=True)
     stage_parser.add_argument("--status", choices=sorted(STATUSES), required=True)
     stage_parser.add_argument("--company")
-    stage_parser.add_argument("--provider", choices=["exa", "web"])
+    stage_parser.add_argument("--provider", choices=sorted(PROVIDERS))
     stage_parser.add_argument("--exit-code", type=int)
     stage_parser.add_argument("--error")
     stage_parser.add_argument("--artifact", action="append", default=[])

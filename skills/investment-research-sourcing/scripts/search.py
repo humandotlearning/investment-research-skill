@@ -312,32 +312,135 @@ def _load_source_adapters():
     return module
 
 
+def _sentence_fragment(value: str) -> str:
+    return " ".join(str(value).split()).rstrip(".!?")
+
+
+def _thesis_fit_reasons(name: str, topic: str, thesis: str) -> list[str]:
+    return [
+        f"{name} matches the sourcing topic: {_sentence_fragment(topic)}.",
+        f"{name} is relevant to the investment thesis: {_sentence_fragment(thesis)}.",
+    ]
+
+
+def _research_limit(input_data: dict, requested_count: int) -> int:
+    research = input_data.get("research", {}) if isinstance(input_data, dict) else {}
+    value = research.get("limit", 8) if isinstance(research, dict) else 8
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= requested_count:
+        raise RetrievalError(
+            "research.limit must be from 1 through sourcing.target_count", EXIT_INPUT
+        )
+    return value
+
+
+def _run_candidate(candidate: dict, research_limit: int) -> dict:
+    source_url = candidate["origins"][0]["canonical_url"]
+    reasons = list(candidate["thesis_fit_reasons"])
+    return {
+        **candidate,
+        "description": candidate["one_line_description"],
+        "candidate_type": "priority",
+        "fit_reasons": reasons,
+        "research_priority": candidate["rank"],
+        "source_quality": "primary_record",
+        "source_urls": [source_url],
+        "selected_for_research": candidate["rank"] <= research_limit,
+    }
+
+
+def _run_exclusion(exclusion: dict) -> dict:
+    return {
+        **exclusion,
+        "name": str(exclusion.get("name") or "Unknown"),
+        "candidate_type": "excluded",
+    }
+
+
+def _retrieval_result(candidate: dict) -> dict:
+    origin = candidate["origins"][0]
+    description = str(candidate["one_line_description"])
+    return {
+        "title": candidate["name"],
+        "url": origin["canonical_url"],
+        "published_date": origin["publication_or_batch_date"],
+        "highlights": [description[:MAX_HIGHLIGHT_CHARS]] if description else [],
+    }
+
+
 def _snapshot_main(argv) -> int:
     parser = argparse.ArgumentParser(
         description="Normalize Product Hunt and YC snapshots with optional HN enrichment."
     )
+    parser.add_argument("--input", type=Path, required=True)
+    parser.add_argument("--thesis", type=Path, required=True)
     parser.add_argument("--product-hunt", type=Path, required=True)
     parser.add_argument("--yc", type=Path, required=True)
     parser.add_argument("--hacker-news", type=Path)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--retrieval-output", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
         adapters = _load_source_adapters()
+        input_data = json.loads(args.input.read_text(encoding="utf-8"))
+        thesis = args.thesis.read_text(encoding="utf-8")
+        topic = _seed_text(input_data)
+        requested_count = _target_count(input_data)
+        research_limit = _research_limit(input_data, requested_count)
+        if not thesis.strip():
+            raise RetrievalError("thesis must be non-empty", EXIT_INPUT)
+        query = (
+            f"Official Product Hunt and YC snapshots for {_sentence_fragment(topic)}. "
+            f"Investment thesis: {_sentence_fragment(thesis)}."
+        )
         product_hunt = adapters.parse_product_hunt_atom(
             args.product_hunt.read_text(encoding="utf-8")
         )
         yc = adapters.normalize_yc_snapshot(
             json.loads(args.yc.read_text(encoding="utf-8"))
         )
-        candidates, excluded = adapters.normalize_candidates(product_hunt + yc)
+        records = product_hunt + yc
+        for record in records:
+            record["thesis_fit_reasons"] = _thesis_fit_reasons(
+                record["name"], topic, thesis
+            )
+        candidates, excluded = adapters.normalize_candidates(records)
+        for candidate in candidates:
+            candidate["thesis_fit_reasons"] = _thesis_fit_reasons(
+                candidate["name"], topic, thesis
+            )
         if args.hacker_news is not None:
             items = json.loads(args.hacker_news.read_text(encoding="utf-8"))
             candidates = adapters.enrich_with_hacker_news(candidates, items)
+        overflow = candidates[requested_count:]
+        candidates = candidates[:requested_count]
+        excluded.extend(
+            {
+                "name": candidate["name"],
+                "candidate_type": "excluded",
+                "reason": "outside requested count",
+                "origins": candidate["origins"],
+            }
+            for candidate in overflow
+        )
+        run_candidates = [
+            _run_candidate(candidate, research_limit) for candidate in candidates
+        ]
+        retrieval = {
+            "query": query,
+            "provider": "source_snapshots",
+            "retrieved_at": utc_now(),
+            "status": "ok",
+            "exit_code": 0,
+            "results": [_retrieval_result(candidate) for candidate in candidates],
+        }
         payload = {
-            "provider": "official_snapshots",
-            "actual_count": len(candidates),
-            "candidates": candidates,
-            "excluded": excluded,
+            "provider": "source_snapshots",
+            "query": query,
+            "retrieval_path": "sourcing/retrieval.json",
+            "requested_count": requested_count,
+            "actual_count": len(run_candidates),
+            "candidates": run_candidates,
+            "excluded": [_run_exclusion(exclusion) for exclusion in excluded],
         }
     except (OSError, json.JSONDecodeError, SyntaxError, RetrievalError) as error:
         print(
@@ -349,6 +452,7 @@ def _snapshot_main(argv) -> int:
         )
         return EXIT_INPUT
     try:
+        atomic_write_json(args.retrieval_output, retrieval)
         atomic_write_json(args.output, payload)
     except (OSError, TypeError, ValueError) as error:
         print(

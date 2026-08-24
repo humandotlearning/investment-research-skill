@@ -64,9 +64,13 @@ class PackageContractTests(unittest.TestCase):
 
         for phrase in [
             "scripts/search.py snapshots",
+            "--input",
+            "--thesis",
             "--product-hunt",
             "--yc",
             "--hacker-news",
+            "--retrieval-output",
+            "source_snapshots",
             "legacy exa",
         ]:
             self.assertIn(phrase, text)
