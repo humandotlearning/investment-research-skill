@@ -583,14 +583,6 @@ class FlowEvidenceCoverageTests(unittest.TestCase):
     def test_current_flow_sourcing_requires_source_snapshots_provider(self):
         with tempfile.TemporaryDirectory() as directory:
             run_dir = self.make_complete_run(Path(directory))
-            candidates_path = run_dir / "sourcing" / "candidates.json"
-            candidates = json.loads(candidates_path.read_text(encoding="utf-8"))
-            candidates["provider"] = "web"
-            candidates_path.write_text(json.dumps(candidates), encoding="utf-8")
-            retrieval_path = run_dir / "sourcing" / "retrieval.json"
-            retrieval = json.loads(retrieval_path.read_text(encoding="utf-8"))
-            retrieval["provider"] = "web"
-            retrieval_path.write_text(json.dumps(retrieval), encoding="utf-8")
             manifest_path = run_dir / "manifest.json"
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             manifest["stages"]["sourcing"]["provider"] = "web"

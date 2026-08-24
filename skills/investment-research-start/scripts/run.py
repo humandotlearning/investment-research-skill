@@ -1346,6 +1346,8 @@ def update_stage(
     if stage == "research" and status == "running" and int(record.get("attempt_count", 0)) >= 2:
         raise ValueError("research permits one initial attempt and one retry")
     if status == "completed":
+        if stage == "sourcing" and provider != "source_snapshots":
+            raise ValueError("current flow sourcing requires provider source_snapshots")
         if company:
             predecessor = {"research": "sourcing", "analysis": "research", "memo": "analysis"}.get(stage)
             if predecessor == "sourcing":
@@ -1844,6 +1846,12 @@ def _validate_new(run_dir: Path) -> dict:
         errors.append(f"candidates has invalid provider: {sourcing.get('provider')}")
     if manifest.get("version") == 2 and sourcing.get("provider") != "source_snapshots":
         errors.append("current flow sourcing requires provider source_snapshots")
+    manifest_sourcing_provider = manifest.get("stages", {}).get("sourcing", {}).get("provider")
+    if manifest.get("version") == 2:
+        if manifest_sourcing_provider != "source_snapshots":
+            errors.append("current flow manifest sourcing provider must be source_snapshots")
+        elif manifest_sourcing_provider != sourcing.get("provider"):
+            errors.append("manifest sourcing provider does not match candidates artifact")
     if sourcing.get("retrieval_path") != "sourcing/retrieval.json":
         errors.append("candidates retrieval_path must be sourcing/retrieval.json")
     if isinstance(sourcing_retrieval, dict):

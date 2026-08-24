@@ -261,6 +261,8 @@ class RunScriptTests(unittest.TestCase):
                     run_dir,
                     "sourcing",
                     "completed",
+                    provider="source_snapshots",
+                    exit_code=0,
                     artifacts=["sourcing/candidates.json"],
                 )
 
@@ -272,7 +274,7 @@ class RunScriptTests(unittest.TestCase):
                     run_dir,
                     "sourcing",
                     "completed",
-                    provider="web",
+                    provider="source_snapshots",
                     exit_code=0,
                     artifacts=["sourcing/candidates.json"],
                 )
@@ -282,7 +284,7 @@ class RunScriptTests(unittest.TestCase):
                 json.dumps(
                     {
                         "query": "AI",
-                        "provider": "web",
+                        "provider": "source_snapshots",
                         "retrieved_at": "2026-08-23T00:00:00Z",
                         "status": "ok",
                         "exit_code": 0,
@@ -294,7 +296,7 @@ class RunScriptTests(unittest.TestCase):
             artifact.write_text(
                 json.dumps(
                     {
-                        "provider": "web",
+                        "provider": "source_snapshots",
                         "query": "AI",
                         "retrieval_path": "sourcing/retrieval.json",
                         "requested_count": 15,
@@ -310,7 +312,7 @@ class RunScriptTests(unittest.TestCase):
                     run_dir,
                     "sourcing",
                     "completed",
-                    provider="web",
+                    provider="source_snapshots",
                     exit_code=0,
                     artifacts=["sourcing/retrieval.json", "sourcing/candidates.json"],
                 )
