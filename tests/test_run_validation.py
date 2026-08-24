@@ -21,6 +21,9 @@ def write_rubric(path, thesis_path):
     rubric = json.loads(RUBRIC_FIXTURE.read_text(encoding="utf-8"))
     thesis = thesis_path.read_text(encoding="utf-8")
     rubric["thesis_fingerprint"] = hashlib.sha256(thesis.encode("utf-8")).hexdigest()
+    for category in rubric["categories"]:
+        for score in category["anchors"]:
+            category["anchors"][score] += f" Thesis context: {thesis}"
     path.write_text(json.dumps(rubric), encoding="utf-8")
     return path
 
@@ -200,6 +203,18 @@ class NewRunValidationTests(unittest.TestCase):
             result = self.run_module.validate_run(run_dir)
 
         self.assertTrue(any("fingerprint" in error for error in result["errors"]))
+
+    def test_v2_manifest_cannot_downgrade_to_legacy_with_list_candidates(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = self.make_run(Path(directory))
+            candidates_path = run_dir / "sourcing" / "candidates.json"
+            candidates_path.write_text('[{"name":"Legacy shape"}]\n', encoding="utf-8")
+
+            result = self.run_module.validate_run(run_dir)
+
+        self.assertEqual(result["layout"], "current")
+        self.assertFalse(result["valid"])
+        self.assertTrue(any("candidates.json must be an object" in error for error in result["errors"]))
 
     def test_malformed_nested_shapes_become_validation_errors(self):
         with tempfile.TemporaryDirectory() as directory:

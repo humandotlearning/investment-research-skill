@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import importlib.util
 import json
 import os
@@ -268,8 +267,7 @@ def normalize_input(value: dict) -> dict:
 
 
 def _fingerprint(input_data: dict, thesis: str) -> str:
-    serialized = json.dumps(input_data, sort_keys=True, ensure_ascii=False)
-    return hashlib.sha256(f"{serialized}\n{thesis}".encode("utf-8")).hexdigest()
+    return ASSIGNMENT_V2.input_fingerprint(input_data, thesis)
 
 
 def _stage_record() -> dict:
@@ -300,7 +298,14 @@ def _load_assignment_sources(
     return input_data, thesis, rubric
 
 
-def _stored_v2_assignment(run_dir: Path, manifest: dict) -> tuple[dict, str, dict, str]:
+def _stored_v2_assignment(
+    run_dir: Path, manifest: dict, *, require_active: bool = False
+) -> tuple[dict, str, dict, str]:
+    errors = ASSIGNMENT_V2.validate_stored_assignment(run_dir, manifest)
+    if errors:
+        raise ValueError("; ".join(errors))
+    if require_active and manifest.get("superseded_by"):
+        raise ValueError("existing run has been superseded and cannot continue")
     try:
         input_data = normalize_input(read_json(run_dir / "input.json"))
         thesis = (run_dir / "thesis.md").read_text(encoding="utf-8")
@@ -311,10 +316,6 @@ def _stored_v2_assignment(run_dir: Path, manifest: dict) -> tuple[dict, str, dic
     except (OSError, json.JSONDecodeError, ValueError) as error:
         raise ValueError(f"stored run assignment is invalid: {error}") from error
     fingerprint = ASSIGNMENT_V2.assignment_fingerprint(input_data, thesis, rubric)
-    if manifest.get("version") != 2:
-        raise ValueError("existing run is not an assignment-v2 run")
-    if manifest.get("assignment_fingerprint") != fingerprint:
-        raise ValueError("stored run assignment fingerprint does not match its artifacts")
     return input_data, thesis, rubric, fingerprint
 
 
@@ -323,7 +324,12 @@ def initialize_run(
     input_path: str | Path,
     thesis_path: str | Path,
     rubric_path: str | Path | None = None,
+    *,
+    _supersedes_run_id: str | None = None,
+    _supersedes_run_path: str | None = None,
 ) -> dict:
+    if (_supersedes_run_id is None) != (_supersedes_run_path is None):
+        raise ValueError("superseding initialization requires both run id and path")
     run_dir = Path(run_dir)
     input_data, thesis, rubric = _load_assignment_sources(
         input_path, thesis_path, rubric_path
@@ -337,7 +343,7 @@ def initialize_run(
     if manifest_path.exists():
         manifest = read_json(manifest_path)
         stored_input, stored_thesis, _, stored_assignment_fingerprint = (
-            _stored_v2_assignment(run_dir, manifest)
+            _stored_v2_assignment(run_dir, manifest, require_active=True)
         )
         if manifest.get("input_fingerprint") != _fingerprint(stored_input, stored_thesis):
             raise ValueError("stored run fingerprint does not match input.json and thesis.md")
@@ -363,8 +369,8 @@ def initialize_run(
         "input_fingerprint": fingerprint,
         "rubric_fingerprint": rubric_fingerprint,
         "assignment_fingerprint": assignment_fingerprint,
-        "supersedes_run_id": None,
-        "supersedes_run_path": None,
+        "supersedes_run_id": _supersedes_run_id,
+        "supersedes_run_path": _supersedes_run_path,
         "superseded_by": None,
         "stages": {"sourcing": _stage_record()},
         "companies": {},
@@ -389,41 +395,62 @@ def supersede_run(
     new_dir = Path(run_dir).resolve()
     if old_dir == new_dir or old_dir in new_dir.parents:
         raise ValueError("superseding run must use a separate directory outside the old run")
-    if new_dir.exists() and any(new_dir.iterdir()):
-        raise ValueError("superseding run directory already contains files")
     old_manifest_path = old_dir / "manifest.json"
     old_manifest = read_json(old_manifest_path)
     _, _, _, old_fingerprint = _stored_v2_assignment(old_dir, old_manifest)
-    if old_manifest.get("superseded_by"):
-        raise ValueError("existing run is already superseded")
     input_data, thesis, rubric = _load_assignment_sources(
         input_path, thesis_path, rubric_path
     )
     new_fingerprint = ASSIGNMENT_V2.assignment_fingerprint(input_data, thesis, rubric)
     if new_fingerprint == old_fingerprint:
         raise ValueError("superseding run must change input, thesis, or rubric")
-
-    result = initialize_run(new_dir, input_path, thesis_path, rubric_path)
-    new_manifest_path = new_dir / "manifest.json"
-    new_manifest = result["manifest"]
-    now = utc_now()
-    new_manifest.update(
-        {
-            "supersedes_run_id": old_manifest["run_id"],
-            "supersedes_run_path": str(old_dir),
-            "updated_at": now,
-        }
-    )
-    atomic_write_json(new_manifest_path, new_manifest)
-    old_manifest["superseded_by"] = {
-        "run_id": new_manifest["run_id"],
+    expected_backlink = {
+        "run_id": new_dir.name,
         "path": str(new_dir),
-        "assignment_fingerprint": new_manifest["assignment_fingerprint"],
-        "linked_at": now,
+        "assignment_fingerprint": new_fingerprint,
     }
-    old_manifest["updated_at"] = now
-    atomic_write_json(old_manifest_path, old_manifest)
-    result["manifest"] = new_manifest
+    old_link = old_manifest.get("superseded_by")
+    if old_link is not None and any(
+        old_link.get(field) != value for field, value in expected_backlink.items()
+    ):
+        raise ValueError("existing run has a conflicting superseded_by link")
+
+    new_manifest_path = new_dir / "manifest.json"
+    new_has_files = new_dir.exists() and any(new_dir.iterdir())
+    if new_has_files:
+        if not new_manifest_path.is_file():
+            raise ValueError("superseding run directory already contains unrelated files")
+        new_manifest = read_json(new_manifest_path)
+        _, _, _, stored_new_fingerprint = _stored_v2_assignment(
+            new_dir, new_manifest, require_active=True
+        )
+        if (
+            stored_new_fingerprint != new_fingerprint
+            or new_manifest.get("run_id") != new_dir.name
+            or new_manifest.get("supersedes_run_id") != old_manifest.get("run_id")
+            or new_manifest.get("supersedes_run_path") != str(old_dir)
+        ):
+            raise ValueError("existing destination has conflicting superseding linkage")
+        result = {"resumed": True, "manifest": new_manifest}
+    else:
+        if old_link is not None:
+            raise ValueError("superseded_by link points to a missing destination run")
+        result = initialize_run(
+            new_dir,
+            input_path,
+            thesis_path,
+            rubric_path,
+            _supersedes_run_id=old_manifest["run_id"],
+            _supersedes_run_path=str(old_dir),
+        )
+        new_manifest = result["manifest"]
+
+    if old_link is None:
+        now = utc_now()
+        linked_old_manifest = dict(old_manifest)
+        linked_old_manifest["superseded_by"] = {**expected_backlink, "linked_at": now}
+        linked_old_manifest["updated_at"] = now
+        atomic_write_json(old_manifest_path, linked_old_manifest)
     return result
 
 
@@ -637,6 +664,8 @@ def update_stage(
     run_dir = Path(run_dir)
     manifest_path = run_dir / "manifest.json"
     manifest = read_json(manifest_path)
+    if isinstance(manifest, dict) and manifest.get("version") == 2:
+        _stored_v2_assignment(run_dir, manifest, require_active=True)
     if company:
         if stage in {"sourcing", "validation"}:
             raise ValueError(f"{stage} is a run-level stage")
@@ -1319,6 +1348,16 @@ def _validate_new(run_dir: Path) -> dict:
 
 def validate_run(run_dir: str | Path) -> dict:
     run_dir = Path(run_dir)
+    try:
+        manifest = read_json(run_dir / "manifest.json")
+    except (OSError, json.JSONDecodeError):
+        manifest = {}
+    if isinstance(manifest, dict) and manifest.get("version") == 2:
+        result = _validate_new(run_dir)
+        lifecycle_errors = ASSIGNMENT_V2.validate_stored_assignment(run_dir, manifest)
+        result["errors"] = lifecycle_errors + result["errors"]
+        result["valid"] = not result["errors"]
+        return result
     candidates_path = run_dir / "sourcing" / "candidates.json"
     try:
         candidates = read_json(candidates_path)
@@ -1326,16 +1365,7 @@ def validate_run(run_dir: str | Path) -> dict:
         candidates = None
     if isinstance(candidates, list):
         return _validate_legacy(run_dir)
-    result = _validate_new(run_dir)
-    try:
-        manifest = read_json(run_dir / "manifest.json")
-    except (OSError, json.JSONDecodeError):
-        manifest = {}
-    if isinstance(manifest, dict) and manifest.get("version") == 2:
-        lifecycle_errors = ASSIGNMENT_V2.validate_stored_assignment(run_dir, manifest)
-        result["errors"] = lifecycle_errors + result["errors"]
-        result["valid"] = not result["errors"]
-    return result
+    return _validate_new(run_dir)
 
 
 def _compact(value: dict) -> str:

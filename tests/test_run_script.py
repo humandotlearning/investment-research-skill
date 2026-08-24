@@ -24,6 +24,9 @@ def write_rubric(path, thesis_path):
     rubric = json.loads(RUBRIC_FIXTURE.read_text(encoding="utf-8"))
     thesis = thesis_path.read_text(encoding="utf-8")
     rubric["thesis_fingerprint"] = hashlib.sha256(thesis.encode("utf-8")).hexdigest()
+    for category in rubric["categories"]:
+        for score in category["anchors"]:
+            category["anchors"][score] += f" Thesis context: {thesis}"
     path.write_text(json.dumps(rubric), encoding="utf-8")
     return path
 
@@ -171,16 +174,18 @@ class RunScriptTests(unittest.TestCase):
             source_input.write_text(
                 json.dumps({"seed": {"type": "topic", "value": "AI"}}), encoding="utf-8"
             )
-            source_thesis.write_text("# Thesis\n", encoding="utf-8")
+            source_thesis.write_text("# Thesis\nVisual workflows.\n", encoding="utf-8")
             source_rubric = write_rubric(root / "rubric.json", source_thesis)
             run_dir = root / "run"
             self.run_module.initialize_run(run_dir, source_input, source_thesis, source_rubric)
 
             (run_dir / "thesis.md").write_text("# Tampered\n", encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "stored run assignment"):
+            with self.assertRaisesRegex(ValueError, "rubric|stored run assignment"):
                 self.run_module.initialize_run(run_dir, source_input, source_thesis, source_rubric)
 
-            (run_dir / "thesis.md").write_text("# Thesis\n", encoding="utf-8")
+            (run_dir / "thesis.md").write_text(
+                "# Thesis\nVisual workflows.\n", encoding="utf-8"
+            )
             manifest_path = run_dir / "manifest.json"
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             manifest["validation"]["status"] = "completed"
@@ -313,7 +318,7 @@ class RunScriptTests(unittest.TestCase):
             source_input.write_text(
                 json.dumps({"seed": {"type": "topic", "value": "AI"}}), encoding="utf-8"
             )
-            thesis.write_text("# Thesis\n", encoding="utf-8")
+            thesis.write_text("# Thesis\nVisual workflows.\n", encoding="utf-8")
             rubric = write_rubric(root / "rubric.json", thesis)
             run_dir = root / "run"
             self.run_module.initialize_run(run_dir, source_input, thesis, rubric)
@@ -331,7 +336,7 @@ class RunScriptTests(unittest.TestCase):
             source_input.write_text(
                 json.dumps({"seed": {"type": "topic", "value": "AI"}}), encoding="utf-8"
             )
-            thesis.write_text("# Thesis\n", encoding="utf-8")
+            thesis.write_text("# Thesis\nVisual workflows.\n", encoding="utf-8")
             rubric = write_rubric(root / "rubric.json", thesis)
             run_dir = root / "run"
             self.run_module.initialize_run(run_dir, source_input, thesis, rubric)
@@ -340,6 +345,58 @@ class RunScriptTests(unittest.TestCase):
                 self.run_module.update_stage(
                     run_dir, "research", "running", company="../../outside"
                 )
+
+    def test_stage_rejects_tampered_or_superseded_v2_assignment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source_input = root / "input.json"
+            thesis = root / "thesis.md"
+            source_input.write_text(
+                json.dumps({"seed": {"type": "topic", "value": "visual agents"}}),
+                encoding="utf-8",
+            )
+            thesis.write_text("# Thesis\nVisual workflows.\n", encoding="utf-8")
+            rubric = write_rubric(root / "rubric.json", thesis)
+            run_dir = root / "run"
+            self.run_module.initialize_run(run_dir, source_input, thesis, rubric)
+            (run_dir / "rubric.json").unlink()
+            manifest_before = (run_dir / "manifest.json").read_bytes()
+
+            with self.assertRaisesRegex(ValueError, "rubric"):
+                self.run_module.update_stage(
+                    run_dir, "research", "running", company="acme"
+                )
+
+            self.assertEqual(manifest_before, (run_dir / "manifest.json").read_bytes())
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source_input = root / "input.json"
+            thesis = root / "thesis.md"
+            source_input.write_text(
+                json.dumps({"seed": {"type": "topic", "value": "visual agents"}}),
+                encoding="utf-8",
+            )
+            thesis.write_text("# Thesis\nVisual workflows.\n", encoding="utf-8")
+            rubric = write_rubric(root / "rubric.json", thesis)
+            old_run = root / "old-run"
+            self.run_module.initialize_run(old_run, source_input, thesis, rubric)
+            changed_input = root / "changed-input.json"
+            changed_input.write_text(
+                json.dumps({"seed": {"type": "topic", "value": "visual memory"}}),
+                encoding="utf-8",
+            )
+            self.run_module.supersede_run(
+                old_run, root / "new-run", changed_input, thesis, rubric
+            )
+            manifest_before = (old_run / "manifest.json").read_bytes()
+
+            with self.assertRaisesRegex(ValueError, "superseded"):
+                self.run_module.update_stage(
+                    old_run, "research", "running", company="acme"
+                )
+
+            self.assertEqual(manifest_before, (old_run / "manifest.json").read_bytes())
 
     def test_legacy_fixture_reports_mixed_and_stale_without_writing(self):
         fixture = ROOT / "tests" / "fixtures" / "legacy-run"

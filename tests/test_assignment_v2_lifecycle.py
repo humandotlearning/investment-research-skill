@@ -6,6 +6,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -123,6 +124,96 @@ class AssignmentV2LifecycleTests(unittest.TestCase):
         self.assertIsNone(manifest["supersedes_run_path"])
         self.assertIsNone(manifest["superseded_by"])
 
+    def test_resume_rejects_manifest_fingerprint_drift_and_superseded_runs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            sources = self.write_sources(root / "sources")
+            run_dir = root / "run"
+            self.run_module.initialize_run(run_dir, *sources)
+            manifest_path = run_dir / "manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["rubric_fingerprint"] = "0" * 64
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "rubric fingerprint"):
+                self.run_module.initialize_run(run_dir, *sources)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            old_sources = self.write_sources(root / "old-sources")
+            old_run = root / "old-run"
+            self.run_module.initialize_run(old_run, *old_sources)
+            new_sources = self.write_sources(
+                root / "new-sources",
+                input_change=lambda value: value["seed"].update(
+                    {"value": "new visual-memory topic"}
+                ),
+            )
+            self.run_module.supersede_run(old_run, root / "new-run", *new_sources)
+
+            with self.assertRaisesRegex(ValueError, "superseded"):
+                self.run_module.initialize_run(old_run, *old_sources)
+
+    def test_rubric_anchor_keys_are_order_independent_distinct_and_thesis_specific(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            def reorder(value):
+                anchors = value["categories"][0]["anchors"]
+                value["categories"][0]["anchors"] = {
+                    "20": anchors["20"],
+                    "0": anchors["0"],
+                    "10": anchors["10"],
+                }
+
+            reordered = self.write_sources(root / "reordered", rubric_change=reorder)
+            self.run_module.initialize_run(root / "reordered-run", *reordered)
+
+            def duplicate(value):
+                anchors = value["categories"][0]["anchors"]
+                anchors["10"] = anchors["0"]
+
+            duplicate_sources = self.write_sources(
+                root / "duplicate", rubric_change=duplicate
+            )
+            with self.assertRaisesRegex(ValueError, "distinct"):
+                self.run_module.initialize_run(
+                    root / "duplicate-run", *duplicate_sources
+                )
+
+            def unrelated(value):
+                value["categories"][0]["anchors"] = {
+                    "0": "Nebula alpha evidence.",
+                    "10": "Nebula beta evidence.",
+                    "20": "Nebula gamma evidence.",
+                }
+
+            unrelated_sources = self.write_sources(
+                root / "unrelated", rubric_change=unrelated
+            )
+            with self.assertRaisesRegex(ValueError, "thesis token"):
+                self.run_module.initialize_run(
+                    root / "unrelated-run", *unrelated_sources
+                )
+
+            def boilerplate_only(value):
+                for category in value["categories"]:
+                    category["anchors"] = {
+                        "0": "Investment thesis alpha case.",
+                        "10": "Investment thesis beta case.",
+                        "20": "Investment thesis gamma case.",
+                    }
+
+            boilerplate_sources = self.write_sources(
+                root / "boilerplate",
+                thesis="# Investment thesis\nAI.\n",
+                rubric_change=boilerplate_only,
+            )
+            with self.assertRaisesRegex(ValueError, "meaningful"):
+                self.run_module.initialize_run(
+                    root / "boilerplate-run", *boilerplate_sources
+                )
+
     def test_changed_input_thesis_or_rubric_never_mutates_existing_run(self):
         changes = {
             "input": {"input_change": lambda value: value.update({"assumptions": ["new"]})},
@@ -200,8 +291,85 @@ class AssignmentV2LifecycleTests(unittest.TestCase):
                     for name in ("input.json", "thesis.md", "rubric.json")
                 },
             )
-            with self.assertRaisesRegex(ValueError, "already superseded"):
+            with self.assertRaisesRegex(ValueError, "conflicting"):
                 self.run_module.supersede_run(old_run, root / "another-run", *new_sources)
+
+    def test_supersede_retry_repairs_failed_backward_link_without_mutating_new_run(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            old_sources = self.write_sources(root / "old-sources")
+            old_run = root / "old-run"
+            self.run_module.initialize_run(old_run, *old_sources)
+            new_sources = self.write_sources(
+                root / "new-sources",
+                input_change=lambda value: value["seed"].update(
+                    {"value": "recoverable visual-memory topic"}
+                ),
+            )
+            new_run = root / "new-run"
+            original_write = self.run_module.atomic_write_json
+            new_manifest_writes = []
+
+            def fail_backward_link(path, value):
+                resolved = Path(path).resolve()
+                if resolved == (new_run / "manifest.json").resolve():
+                    new_manifest_writes.append(json.loads(json.dumps(value)))
+                if (
+                    resolved == (old_run / "manifest.json").resolve()
+                    and value.get("superseded_by")
+                ):
+                    raise self.run_module.ArtifactWriteError("backward link blocked")
+                return original_write(path, value)
+
+            with patch.object(
+                self.run_module, "atomic_write_json", side_effect=fail_backward_link
+            ):
+                with self.assertRaisesRegex(
+                    self.run_module.ArtifactWriteError, "backward link blocked"
+                ):
+                    self.run_module.supersede_run(
+                        old_run, new_run, *new_sources
+                    )
+
+            new_manifest = json.loads(
+                (new_run / "manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(len(new_manifest_writes), 1)
+            self.assertEqual(new_manifest["supersedes_run_id"], "old-run")
+            self.assertEqual(new_manifest["supersedes_run_path"], str(old_run.resolve()))
+            before_retry = {
+                path.relative_to(new_run): path.read_bytes()
+                for path in new_run.rglob("*")
+                if path.is_file()
+            }
+
+            self.run_module.supersede_run(old_run, new_run, *new_sources)
+
+            after_retry = {
+                path.relative_to(new_run): path.read_bytes()
+                for path in new_run.rglob("*")
+                if path.is_file()
+            }
+            old_manifest = json.loads(
+                (old_run / "manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(before_retry, after_retry)
+            self.assertEqual(old_manifest["superseded_by"]["run_id"], "new-run")
+
+    def test_validate_run_rejects_malformed_lifecycle_links(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            sources = self.write_sources(root / "sources")
+            run_dir = root / "run"
+            self.run_module.initialize_run(run_dir, *sources)
+            manifest_path = run_dir / "manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["supersedes_run_id"] = "old-run"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            result = self.run_module.validate_run(run_dir)
+
+        self.assertTrue(any("linkage" in error for error in result["errors"]))
 
     def test_supersede_refuses_to_reuse_an_existing_destination_run(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -218,7 +386,7 @@ class AssignmentV2LifecycleTests(unittest.TestCase):
             occupied_run = root / "occupied-run"
             self.run_module.initialize_run(occupied_run, *new_sources)
 
-            with self.assertRaisesRegex(ValueError, "already contains"):
+            with self.assertRaisesRegex(ValueError, "conflicting|already contains"):
                 self.run_module.supersede_run(
                     old_run, occupied_run, *new_sources
                 )

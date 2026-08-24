@@ -132,3 +132,87 @@ The first full-suite run exposed two intentional compatibility assertions: the p
 ## Concerns
 
 - Bidirectional links span two directories and cannot be transactionally atomic with standard filesystem primitives. The implementation writes the new run's forward link first and then attempts the old run's backward link, so a failure during the second atomic write can leave a valid forward-only link. Assignment artifacts remain unchanged in that case.
+
+## Review hardening follow-up
+
+The review findings were addressed as a lifecycle-only follow-up. No Task 2A2 sourcing, company, memo, or summary validators were added.
+
+### Follow-up RED evidence
+
+Focused command:
+
+```powershell
+$failed=0
+& 'C:\ProgramData\anaconda3\python.exe' -m unittest discover -s tests -p 'test_assignment_v2_lifecycle.py' -v
+if ($LASTEXITCODE -ne 0) {$failed=1}
+& 'C:\ProgramData\anaconda3\python.exe' -m unittest discover -s tests -p 'test_run_script.py' -v
+if ($LASTEXITCODE -ne 0) {$failed=1}
+& 'C:\ProgramData\anaconda3\python.exe' -m unittest discover -s tests -p 'test_run_validation.py' -v
+if ($LASTEXITCODE -ne 0) {$failed=1}
+exit $failed
+```
+
+Initial expected RED summaries:
+
+```text
+AssignmentV2LifecycleTests: Ran 12 tests; FAILED (failures=3, errors=1)
+RunScriptTests: Ran 18 tests; FAILED (failures=1)
+NewRunValidationTests: Ran 16 tests; FAILED (failures=1)
+```
+
+The failures proved that:
+
+- resume did not reject rubric-fingerprint drift or a superseded run;
+- anchor key validation depended on JSON key order;
+- supersession wrote the new manifest twice and could not repair a failed backward link;
+- malformed lifecycle links were not validated;
+- `update_stage` mutated tampered/superseded v2 runs;
+- list-shaped candidates could route a v2 manifest through legacy validation.
+
+Self-review added a second semantic RED command:
+
+```powershell
+& 'C:\ProgramData\anaconda3\python.exe' -m unittest discover -s tests -p 'test_assignment_v2_lifecycle.py' -v
+```
+
+Output summary:
+
+```text
+Ran 12 tests in 1.125s
+FAILED (failures=1)
+```
+
+This regression proved that boilerplate overlap (`investment thesis`) could incorrectly satisfy thesis specificity when the only substantive thesis term was short (`AI`).
+
+### Follow-up GREEN evidence
+
+The focused command above completed with all three suites green:
+
+```text
+AssignmentV2LifecycleTests: Ran 12 tests in 0.999s — OK
+RunScriptTests: Ran 18 tests in 0.490s — OK
+NewRunValidationTests: Ran 16 tests in 1.652s — OK
+Focused total: 46/46 passed
+```
+
+Full-suite command:
+
+```powershell
+& 'C:\ProgramData\anaconda3\python.exe' -m unittest discover -s tests -v
+```
+
+Final output summary:
+
+```text
+Ran 79 tests in 5.726s
+OK
+```
+
+### Follow-up implementation and review notes
+
+- `initialize_run` resume and every v2 `update_stage` now validate stored input, thesis, rubric, input fingerprint, rubric fingerprint, assignment fingerprint, and lifecycle links before continuing. Active operations reject `superseded_by` runs.
+- `validate_run` reads `manifest.json` first and always selects current/v2 validation for `manifest.version == 2`, regardless of candidate payload shape.
+- A superseding run's initial manifest write contains its durable forward `supersedes_run_id` and `supersedes_run_path` link.
+- A retry accepts only a destination whose assignment fingerprint and forward link exactly match the requested supersession. It repairs a missing old-manifest backlink without rewriting any new-run artifact. Conflicting links remain errors.
+- Rubric anchor keys are an order-independent exact set. Level texts must be distinct, and every anchor must share a normalized meaningful thesis token after excluding short tokens, common stopwords, and boilerplate `investment`/`thesis` labels.
+- The previous cross-directory concern is now explicitly recoverable: a forward-only run left by a failed backward-link write is a supported retry state, while cross-directory atomicity remains unavailable.

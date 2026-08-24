@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 
 
@@ -18,6 +19,15 @@ RUBRIC_CATEGORIES = (
 ANCHOR_SCORES = ("0", "10", "20")
 PRIMARY_SOURCES = ("product_hunt", "yc")
 SIGNAL_SOURCES = ("hacker_news",)
+STOPWORDS = {
+    "about", "after", "also", "and", "are", "back", "been", "being",
+    "between", "but", "can", "could", "does", "each", "for", "from",
+    "have", "into", "investment", "its", "more", "most", "not", "only", "other",
+    "our", "over", "should", "than", "that", "the", "their", "then",
+    "there", "these", "they", "this", "those", "through", "under",
+    "thesis", "using", "very", "was", "were", "what", "when", "where", "which",
+    "while", "will", "with", "would", "your",
+}
 
 
 def normalize_input(value: dict) -> dict:
@@ -95,6 +105,19 @@ def thesis_fingerprint(thesis: str) -> str:
     return hashlib.sha256(thesis.encode("utf-8")).hexdigest()
 
 
+def input_fingerprint(input_data: dict, thesis: str) -> str:
+    serialized = json.dumps(input_data, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(f"{serialized}\n{thesis}".encode("utf-8")).hexdigest()
+
+
+def _meaningful_tokens(text: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"[a-z0-9]+", text.casefold())
+        if len(token) >= 4 and token not in STOPWORDS
+    }
+
+
 def validate_rubric(value: dict, thesis: str) -> dict:
     """Validate the exact five-row, thesis-bound rubric schema."""
     if not isinstance(value, dict):
@@ -119,10 +142,27 @@ def validate_rubric(value: dict, thesis: str) -> dict:
         if category.get("weight") != 20:
             raise ValueError(f"rubric category weight must be 20: {name}")
         anchors = category.get("anchors")
-        if not isinstance(anchors, dict) or tuple(anchors.keys()) != ANCHOR_SCORES:
+        if (
+            not isinstance(anchors, dict)
+            or len(anchors) != len(ANCHOR_SCORES)
+            or set(anchors) != set(ANCHOR_SCORES)
+        ):
             raise ValueError(f"rubric category requires exact 0/10/20 anchors: {name}")
         if not all(isinstance(anchors[score], str) and anchors[score].strip() for score in ANCHOR_SCORES):
             raise ValueError(f"rubric anchors must be non-empty thesis-specific text: {name}")
+        normalized_texts = {
+            " ".join(anchors[score].casefold().split()) for score in ANCHOR_SCORES
+        }
+        if len(normalized_texts) != len(ANCHOR_SCORES):
+            raise ValueError(f"rubric anchor level texts must be distinct: {name}")
+        thesis_tokens = _meaningful_tokens(thesis)
+        if not thesis_tokens:
+            raise ValueError("thesis must contain a meaningful token for rubric anchors")
+        for score in ANCHOR_SCORES:
+            if not (_meaningful_tokens(anchors[score]) & thesis_tokens):
+                raise ValueError(
+                    f"rubric anchor {score} must contain a meaningful thesis token: {name}"
+                )
     if sum(category["weight"] for category in categories) != 100:
         raise ValueError("rubric category weights must total 100")
     return value
@@ -165,8 +205,32 @@ def validate_stored_assignment(run_dir: str | Path, manifest: dict) -> list[str]
     if manifest.get("version") != VERSION:
         errors.append("manifest.version must be 2")
     if input_data is not None and thesis is not None and rubric is not None:
+        if manifest.get("input_fingerprint") != input_fingerprint(input_data, thesis):
+            errors.append("manifest input fingerprint does not match input.json and thesis.md")
         if manifest.get("assignment_fingerprint") != assignment_fingerprint(input_data, thesis, rubric):
             errors.append("manifest assignment fingerprint does not match input, thesis, and rubric")
         if manifest.get("rubric_fingerprint") != rubric_fingerprint(rubric):
             errors.append("manifest rubric fingerprint does not match rubric.json")
+    supersedes_run_id = manifest.get("supersedes_run_id")
+    supersedes_run_path = manifest.get("supersedes_run_path")
+    if (supersedes_run_id is None) != (supersedes_run_path is None) or (
+        supersedes_run_id is not None
+        and (
+            not isinstance(supersedes_run_id, str)
+            or not supersedes_run_id.strip()
+            or not isinstance(supersedes_run_path, str)
+            or not supersedes_run_path.strip()
+        )
+    ):
+        errors.append("manifest supersedes linkage must provide both run id and path")
+    superseded_by = manifest.get("superseded_by")
+    if superseded_by is not None:
+        if not isinstance(superseded_by, dict) or any(
+            not isinstance(superseded_by.get(field), str)
+            or not superseded_by.get(field, "").strip()
+            for field in ("run_id", "path", "assignment_fingerprint", "linked_at")
+        ):
+            errors.append("manifest superseded_by linkage is invalid")
+        elif not re.fullmatch(r"[0-9a-f]{64}", superseded_by["assignment_fingerprint"]):
+            errors.append("manifest superseded_by linkage has an invalid assignment fingerprint")
     return errors

@@ -20,6 +20,9 @@ def write_rubric(path, thesis_path):
     rubric = json.loads(RUBRIC_FIXTURE.read_text(encoding="utf-8"))
     thesis = thesis_path.read_text(encoding="utf-8")
     rubric["thesis_fingerprint"] = hashlib.sha256(thesis.encode("utf-8")).hexdigest()
+    for category in rubric["categories"]:
+        for score in category["anchors"]:
+            category["anchors"][score] += f" Thesis context: {thesis}"
     path.write_text(json.dumps(rubric), encoding="utf-8")
     return path
 
