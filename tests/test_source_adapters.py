@@ -39,13 +39,6 @@ class SourceAdapterTests(unittest.TestCase):
 
         self.assertEqual(len(records), 1)
         record = records[0]
-        yc_source_url = "https://www.ycombinator.com/companies/acme-ai"
-        expected_yc_origins = [{
-            "source": "yc",
-            "canonical_url": yc_source_url,
-            "source_id": "42",
-            "publication_or_batch_date": "S24",
-        }]
         self.assertEqual(record["name"], "Acme AI")
         self.assertEqual(record["slug"], "acme-ai")
         self.assertEqual(record["website"], "https://acme.example/pricing")
@@ -67,6 +60,13 @@ class SourceAdapterTests(unittest.TestCase):
 
         self.assertEqual(len(records), 1)
         record = records[0]
+        yc_source_url = "https://www.ycombinator.com/companies/acme-ai"
+        expected_yc_origins = [{
+            "source": "yc",
+            "canonical_url": yc_source_url,
+            "source_id": "42",
+            "publication_or_batch_date": "S24",
+        }]
         self.assertEqual(record["name"], "Acme AI")
         self.assertEqual(record["slug"], "acme-ai")
         self.assertEqual(record["website"], "https://acme.example")
