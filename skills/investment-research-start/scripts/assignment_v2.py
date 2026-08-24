@@ -9,6 +9,7 @@ from pathlib import Path
 
 
 VERSION = 2
+INITIALIZATION_MARKER = ".assignment-v2-init.json"
 RUBRIC_CATEGORIES = (
     "Team",
     "Product differentiation",
@@ -179,7 +180,56 @@ def assignment_fingerprint(input_data: dict, thesis: str, rubric: dict) -> str:
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
-def validate_stored_assignment(run_dir: str | Path, manifest: dict) -> list[str]:
+def _resolved_link_target(
+    run_dir: Path, path_value: object, label: str, errors: list[str]
+) -> Path | None:
+    if not isinstance(path_value, str) or not path_value.strip():
+        errors.append(f"{label} linked target path is invalid")
+        return None
+    path = Path(path_value)
+    if not path.is_absolute():
+        errors.append(f"{label} linked target path must be absolute")
+        return None
+    try:
+        target = path.resolve(strict=True)
+        current = run_dir.resolve(strict=True)
+    except OSError as error:
+        errors.append(f"{label} linked target path does not exist: {error}")
+        return None
+    if not target.is_dir() or target == current:
+        errors.append(f"{label} linked target path must identify a different run directory")
+        return None
+    if str(target) != path_value:
+        errors.append(f"{label} linked target path must be resolved exactly")
+        return None
+    return target
+
+
+def _read_linked_manifest(target: Path, label: str, errors: list[str]) -> dict | None:
+    try:
+        value = json.loads((target / "manifest.json").read_text(encoding="utf-8"))
+        if not isinstance(value, dict):
+            raise ValueError("manifest must be an object")
+    except (OSError, json.JSONDecodeError, ValueError) as error:
+        errors.append(f"{label} linked target manifest is invalid: {error}")
+        return None
+    target_errors = validate_stored_assignment(target, value, validate_links=False)
+    errors.extend(f"{label} linked target {error}" for error in target_errors)
+    return value
+
+
+def _same_resolved_path(path_value: object, expected: Path) -> bool:
+    if not isinstance(path_value, str) or not Path(path_value).is_absolute():
+        return False
+    try:
+        return Path(path_value).resolve(strict=True) == expected.resolve(strict=True)
+    except OSError:
+        return False
+
+
+def validate_stored_assignment(
+    run_dir: str | Path, manifest: dict, *, validate_links: bool = True
+) -> list[str]:
     """Return lifecycle errors for a stored v2 assignment without writing files."""
     run_dir = Path(run_dir)
     errors: list[str] = []
@@ -202,8 +252,13 @@ def validate_stored_assignment(run_dir: str | Path, manifest: dict) -> list[str]
     except (OSError, json.JSONDecodeError, ValueError) as error:
         errors.append(f"invalid assignment-v2 rubric.json: {error}")
         rubric = None
+    if not isinstance(manifest, dict):
+        return ["manifest must be a JSON object"]
     if manifest.get("version") != VERSION:
         errors.append("manifest.version must be 2")
+    run_id = manifest.get("run_id")
+    if not isinstance(run_id, str) or not run_id.strip() or run_id != run_dir.name:
+        errors.append("manifest run_id must match the run directory name")
     if input_data is not None and thesis is not None and rubric is not None:
         if manifest.get("input_fingerprint") != input_fingerprint(input_data, thesis):
             errors.append("manifest input fingerprint does not match input.json and thesis.md")
@@ -233,4 +288,52 @@ def validate_stored_assignment(run_dir: str | Path, manifest: dict) -> list[str]
             errors.append("manifest superseded_by linkage is invalid")
         elif not re.fullmatch(r"[0-9a-f]{64}", superseded_by["assignment_fingerprint"]):
             errors.append("manifest superseded_by linkage has an invalid assignment fingerprint")
+
+    if not validate_links:
+        return errors
+
+    current_path = run_dir.resolve()
+    current_fingerprint = manifest.get("assignment_fingerprint")
+    if isinstance(supersedes_run_id, str) and isinstance(supersedes_run_path, str):
+        target = _resolved_link_target(run_dir, supersedes_run_path, "supersedes", errors)
+        if target is not None:
+            target_manifest = _read_linked_manifest(target, "supersedes", errors)
+            if target_manifest is not None:
+                if target_manifest.get("run_id") != supersedes_run_id:
+                    errors.append("supersedes target run_id does not match the forward link")
+                reciprocal = target_manifest.get("superseded_by")
+                if not isinstance(reciprocal, dict):
+                    errors.append("supersedes target is missing reciprocal superseded_by linkage")
+                else:
+                    if reciprocal.get("run_id") != run_id:
+                        errors.append("supersedes target reciprocal run_id does not match")
+                    if reciprocal.get("assignment_fingerprint") != current_fingerprint:
+                        errors.append(
+                            "supersedes target reciprocal assignment fingerprint does not match"
+                        )
+                    if not _same_resolved_path(reciprocal.get("path"), current_path):
+                        errors.append("supersedes target reciprocal path does not match")
+
+    if isinstance(superseded_by, dict) and all(
+        isinstance(superseded_by.get(field), str)
+        for field in ("run_id", "path", "assignment_fingerprint")
+    ):
+        target = _resolved_link_target(run_dir, superseded_by["path"], "superseded_by", errors)
+        if target is not None:
+            target_manifest = _read_linked_manifest(target, "superseded_by", errors)
+            if target_manifest is not None:
+                if target_manifest.get("run_id") != superseded_by["run_id"]:
+                    errors.append("superseded_by target run_id does not match the backward link")
+                if target_manifest.get("assignment_fingerprint") != superseded_by.get(
+                    "assignment_fingerprint"
+                ):
+                    errors.append(
+                        "superseded_by target assignment fingerprint does not match the backward link"
+                    )
+                if target_manifest.get("supersedes_run_id") != run_id:
+                    errors.append("superseded_by target is missing reciprocal supersedes run_id")
+                if not _same_resolved_path(
+                    target_manifest.get("supersedes_run_path"), current_path
+                ):
+                    errors.append("superseded_by target reciprocal supersedes path does not match")
     return errors

@@ -398,6 +398,41 @@ class RunScriptTests(unittest.TestCase):
 
             self.assertEqual(manifest_before, (old_run / "manifest.json").read_bytes())
 
+    def test_stage_fails_closed_on_manifest_version_drift(self):
+        for mutation in ("missing", "wrong", "malformed"):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                source_input = root / "input.json"
+                thesis = root / "thesis.md"
+                source_input.write_text(
+                    json.dumps({"seed": {"type": "topic", "value": "visual agents"}}),
+                    encoding="utf-8",
+                )
+                thesis.write_text("# Thesis\nVisual workflows.\n", encoding="utf-8")
+                rubric = write_rubric(root / "rubric.json", thesis)
+                run_dir = root / "run"
+                self.run_module.initialize_run(run_dir, source_input, thesis, rubric)
+                manifest_path = run_dir / "manifest.json"
+                if mutation == "malformed":
+                    manifest_path.write_text("{", encoding="utf-8")
+                else:
+                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                    if mutation == "missing":
+                        manifest.pop("version")
+                    else:
+                        manifest["version"] = 1
+                    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+                before = manifest_path.read_bytes()
+
+                with self.assertRaises(
+                    (ValueError, json.JSONDecodeError)
+                ):
+                    self.run_module.update_stage(
+                        run_dir, "research", "running", company="acme"
+                    )
+
+                self.assertEqual(before, manifest_path.read_bytes())
+
     def test_legacy_fixture_reports_mixed_and_stale_without_writing(self):
         fixture = ROOT / "tests" / "fixtures" / "legacy-run"
         before = {

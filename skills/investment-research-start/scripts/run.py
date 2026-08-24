@@ -299,9 +299,15 @@ def _load_assignment_sources(
 
 
 def _stored_v2_assignment(
-    run_dir: Path, manifest: dict, *, require_active: bool = False
+    run_dir: Path,
+    manifest: dict,
+    *,
+    require_active: bool = False,
+    validate_links: bool = True,
 ) -> tuple[dict, str, dict, str]:
-    errors = ASSIGNMENT_V2.validate_stored_assignment(run_dir, manifest)
+    errors = ASSIGNMENT_V2.validate_stored_assignment(
+        run_dir, manifest, validate_links=validate_links
+    )
     if errors:
         raise ValueError("; ".join(errors))
     if require_active and manifest.get("superseded_by"):
@@ -317,6 +323,61 @@ def _stored_v2_assignment(
         raise ValueError(f"stored run assignment is invalid: {error}") from error
     fingerprint = ASSIGNMENT_V2.assignment_fingerprint(input_data, thesis, rubric)
     return input_data, thesis, rubric, fingerprint
+
+
+def _initialization_marker(
+    run_dir: Path,
+    fingerprint: str,
+    rubric_fingerprint: str,
+    assignment_fingerprint: str,
+    supersedes_run_id: str | None,
+    supersedes_run_path: str | None,
+) -> dict:
+    return {
+        "version": 2,
+        "run_id": run_dir.name,
+        "input_fingerprint": fingerprint,
+        "rubric_fingerprint": rubric_fingerprint,
+        "assignment_fingerprint": assignment_fingerprint,
+        "supersedes_run_id": supersedes_run_id,
+        "supersedes_run_path": supersedes_run_path,
+    }
+
+
+def _validate_initialization_destination(run_dir: Path, expected_marker: dict) -> Path:
+    marker_path = run_dir / ASSIGNMENT_V2.INITIALIZATION_MARKER
+    if not run_dir.exists() or not any(run_dir.iterdir()):
+        run_dir.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(marker_path, expected_marker)
+        return marker_path
+    if not marker_path.is_file():
+        raise ValueError("run directory is not empty and has no initialization marker")
+    try:
+        marker = read_json(marker_path)
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"initialization marker is invalid: {error}") from error
+    if marker != expected_marker:
+        raise ValueError("initialization marker does not match the requested assignment")
+    allowed = {
+        ASSIGNMENT_V2.INITIALIZATION_MARKER,
+        "input.json",
+        "thesis.md",
+        "rubric.json",
+        "sourcing",
+        "companies",
+    }
+    unexpected = sorted(path.name for path in run_dir.iterdir() if path.name not in allowed)
+    if unexpected:
+        raise ValueError(
+            "initialization directory contains unrelated files: " + ", ".join(unexpected)
+        )
+    for directory_name in ("sourcing", "companies"):
+        directory = run_dir / directory_name
+        if directory.exists() and (not directory.is_dir() or any(directory.iterdir())):
+            raise ValueError(
+                f"initialization directory contains unrelated {directory_name} artifacts"
+            )
+    return marker_path
 
 
 def initialize_run(
@@ -340,7 +401,23 @@ def initialize_run(
         input_data, thesis, rubric
     )
     manifest_path = run_dir / "manifest.json"
+    expected_marker = _initialization_marker(
+        run_dir,
+        fingerprint,
+        rubric_fingerprint,
+        assignment_fingerprint,
+        _supersedes_run_id,
+        _supersedes_run_path,
+    )
+    marker_path = run_dir / ASSIGNMENT_V2.INITIALIZATION_MARKER
     if manifest_path.exists():
+        if marker_path.exists():
+            try:
+                marker = read_json(marker_path)
+            except (OSError, json.JSONDecodeError) as error:
+                raise ValueError(f"initialization marker is invalid: {error}") from error
+            if marker != expected_marker:
+                raise ValueError("initialization marker does not match the durable manifest")
         manifest = read_json(manifest_path)
         stored_input, stored_thesis, _, stored_assignment_fingerprint = (
             _stored_v2_assignment(run_dir, manifest, require_active=True)
@@ -353,11 +430,11 @@ def initialize_run(
             )
         if manifest.get("validation", {}).get("status") == "completed":
             raise ValueError("existing run is already completed")
+        if marker_path.exists():
+            marker_path.unlink()
         return {"resumed": True, "manifest": manifest}
-    if run_dir.exists() and any(run_dir.iterdir()):
-        raise ValueError("run directory is not empty and has no resumable manifest")
 
-    run_dir.mkdir(parents=True, exist_ok=True)
+    marker_path = _validate_initialization_destination(run_dir, expected_marker)
     (run_dir / "sourcing").mkdir(exist_ok=True)
     (run_dir / "companies").mkdir(exist_ok=True)
     now = utc_now()
@@ -380,6 +457,7 @@ def initialize_run(
     atomic_write_text(run_dir / "thesis.md", thesis)
     atomic_write_json(run_dir / "rubric.json", rubric)
     atomic_write_json(manifest_path, manifest)
+    marker_path.unlink()
     return {"resumed": False, "manifest": manifest}
 
 
@@ -416,13 +494,26 @@ def supersede_run(
         raise ValueError("existing run has a conflicting superseded_by link")
 
     new_manifest_path = new_dir / "manifest.json"
-    new_has_files = new_dir.exists() and any(new_dir.iterdir())
-    if new_has_files:
-        if not new_manifest_path.is_file():
-            raise ValueError("superseding run directory already contains unrelated files")
+    if new_manifest_path.is_file():
+        marker_path = new_dir / ASSIGNMENT_V2.INITIALIZATION_MARKER
+        if marker_path.exists():
+            expected_marker = _initialization_marker(
+                new_dir,
+                _fingerprint(input_data, thesis),
+                ASSIGNMENT_V2.rubric_fingerprint(rubric),
+                new_fingerprint,
+                old_manifest["run_id"],
+                str(old_dir),
+            )
+            try:
+                marker = read_json(marker_path)
+            except (OSError, json.JSONDecodeError) as error:
+                raise ValueError(f"initialization marker is invalid: {error}") from error
+            if marker != expected_marker:
+                raise ValueError("initialization marker conflicts with destination manifest")
         new_manifest = read_json(new_manifest_path)
         _, _, _, stored_new_fingerprint = _stored_v2_assignment(
-            new_dir, new_manifest, require_active=True
+            new_dir, new_manifest, require_active=True, validate_links=False
         )
         if (
             stored_new_fingerprint != new_fingerprint
@@ -431,6 +522,8 @@ def supersede_run(
             or new_manifest.get("supersedes_run_path") != str(old_dir)
         ):
             raise ValueError("existing destination has conflicting superseding linkage")
+        if marker_path.exists():
+            marker_path.unlink()
         result = {"resumed": True, "manifest": new_manifest}
     else:
         if old_link is not None:
@@ -664,8 +757,9 @@ def update_stage(
     run_dir = Path(run_dir)
     manifest_path = run_dir / "manifest.json"
     manifest = read_json(manifest_path)
-    if isinstance(manifest, dict) and manifest.get("version") == 2:
-        _stored_v2_assignment(run_dir, manifest, require_active=True)
+    if not isinstance(manifest, dict) or manifest.get("version") != 2:
+        raise ValueError("manifest.version must be 2 for stage updates")
+    _stored_v2_assignment(run_dir, manifest, require_active=True)
     if company:
         if stage in {"sourcing", "validation"}:
             raise ValueError(f"{stage} is a run-level stage")
@@ -1348,22 +1442,44 @@ def _validate_new(run_dir: Path) -> dict:
 
 def validate_run(run_dir: str | Path) -> dict:
     run_dir = Path(run_dir)
-    try:
-        manifest = read_json(run_dir / "manifest.json")
-    except (OSError, json.JSONDecodeError):
-        manifest = {}
-    if isinstance(manifest, dict) and manifest.get("version") == 2:
+    manifest_path = run_dir / "manifest.json"
+    marker_path = run_dir / ASSIGNMENT_V2.INITIALIZATION_MARKER
+    if manifest_path.exists():
+        try:
+            manifest = read_json(manifest_path)
+        except (OSError, json.JSONDecodeError):
+            manifest = None
         result = _validate_new(run_dir)
-        lifecycle_errors = ASSIGNMENT_V2.validate_stored_assignment(run_dir, manifest)
+        lifecycle_errors = (
+            ASSIGNMENT_V2.validate_stored_assignment(run_dir, manifest)
+            if isinstance(manifest, dict)
+            else []
+        )
         result["errors"] = lifecycle_errors + result["errors"]
         result["valid"] = not result["errors"]
         return result
+
+    v2_intended = (run_dir / "rubric.json").exists() or marker_path.exists()
+    try:
+        stored_input = read_json(run_dir / "input.json")
+    except (OSError, json.JSONDecodeError):
+        stored_input = None
+    if isinstance(stored_input, dict) and stored_input.get("version") == 2:
+        v2_intended = True
+    if v2_intended:
+        return _validate_new(run_dir)
+
     candidates_path = run_dir / "sourcing" / "candidates.json"
     try:
         candidates = read_json(candidates_path)
     except (OSError, json.JSONDecodeError):
         candidates = None
-    if isinstance(candidates, list):
+    affirmative_legacy = (
+        isinstance(candidates, list)
+        and (run_dir / "sourcing" / "sourcing.md").is_file()
+        and (run_dir / "evidence").is_dir()
+    )
+    if affirmative_legacy:
         return _validate_legacy(run_dir)
     return _validate_new(run_dir)
 

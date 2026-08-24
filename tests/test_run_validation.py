@@ -216,6 +216,33 @@ class NewRunValidationTests(unittest.TestCase):
         self.assertFalse(result["valid"])
         self.assertTrue(any("candidates.json must be an object" in error for error in result["errors"]))
 
+    def test_manifest_parse_or_version_drift_is_current_not_legacy(self):
+        for mutation in ("missing", "wrong", "malformed"):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as directory:
+                run_dir = self.make_run(Path(directory))
+                (run_dir / "sourcing" / "candidates.json").write_text(
+                    '[{"name":"Legacy shape"}]\n', encoding="utf-8"
+                )
+                manifest_path = run_dir / "manifest.json"
+                if mutation == "malformed":
+                    manifest_path.write_text("{", encoding="utf-8")
+                else:
+                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                    if mutation == "missing":
+                        manifest.pop("version")
+                    else:
+                        manifest["version"] = 1
+                    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+                result = self.run_module.validate_run(run_dir)
+
+                self.assertEqual(result["layout"], "current")
+                self.assertFalse(result["valid"])
+                self.assertTrue(
+                    any("manifest" in error.lower() for error in result["errors"]),
+                    result["errors"],
+                )
+
     def test_malformed_nested_shapes_become_validation_errors(self):
         with tempfile.TemporaryDirectory() as directory:
             run_dir = self.make_run(Path(directory))

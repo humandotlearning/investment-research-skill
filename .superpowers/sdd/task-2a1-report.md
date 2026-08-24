@@ -216,3 +216,83 @@ OK
 - A retry accepts only a destination whose assignment fingerprint and forward link exactly match the requested supersession. It repairs a missing old-manifest backlink without rewriting any new-run artifact. Conflicting links remain errors.
 - Rubric anchor keys are an order-independent exact set. Level texts must be distinct, and every anchor must share a normalized meaningful thesis token after excluding short tokens, common stopwords, and boilerplate `investment`/`thesis` labels.
 - The previous cross-directory concern is now explicitly recoverable: a forward-only run left by a failed backward-link write is a supported retry state, while cross-directory atomicity remains unavailable.
+
+## Final lifecycle-integrity follow-up
+
+This follow-up closes the remaining Task 2A1 version-routing, referential-link, and pre-manifest recovery gaps. It does not add Task 2A2 sourcing, company, memo, or summary validators.
+
+### RED evidence
+
+Command:
+
+```powershell
+$failed=0
+& 'C:\ProgramData\anaconda3\python.exe' -m unittest discover -s tests -p 'test_assignment_v2_lifecycle.py' -v
+if ($LASTEXITCODE -ne 0) { $failed=1 }
+& 'C:\ProgramData\anaconda3\python.exe' -m unittest discover -s tests -p 'test_run_script.py' -v
+if ($LASTEXITCODE -ne 0) { $failed=1 }
+& 'C:\ProgramData\anaconda3\python.exe' -m unittest discover -s tests -p 'test_run_validation.py' -v
+if ($LASTEXITCODE -ne 0) { $failed=1 }
+exit $failed
+```
+
+Captured RED output summaries:
+
+```text
+AssignmentV2LifecycleTests: Ran 14 tests in 1.542s; FAILED (failures=4, errors=1)
+RunScriptTests: Ran 19 tests in 0.685s; FAILED (failures=2)
+NewRunValidationTests: Ran 17 tests in 2.354s; FAILED (failures=3)
+```
+
+The failures demonstrated that no initialization marker survived a pre-manifest write failure, lifecycle links were only syntax-checked, missing/non-2 manifest versions allowed stage mutation, and list-shaped candidates downgraded malformed/current manifests to legacy validation.
+
+### Focused GREEN evidence
+
+The same three-suite command, rerun after implementation and full-diff self-review, produced:
+
+```text
+AssignmentV2LifecycleTests: Ran 14 tests in 1.837s — OK
+RunScriptTests: Ran 19 tests in 0.674s — OK
+NewRunValidationTests: Ran 17 tests in 2.223s — OK
+Focused total: 50/50 passed
+```
+
+### Full-suite GREEN evidence
+
+Command:
+
+```powershell
+& 'C:\ProgramData\anaconda3\python.exe' -m unittest discover -s tests -v
+```
+
+Output:
+
+```text
+Ran 83 tests in 7.112s
+OK
+```
+
+### Files changed in this follow-up
+
+- `skills/investment-research-start/scripts/assignment_v2.py`
+- `skills/investment-research-start/scripts/run.py`
+- `tests/test_assignment_v2_lifecycle.py`
+- `tests/test_run_script.py`
+- `tests/test_run_validation.py`
+- `.superpowers/sdd/task-2a1-report.md`
+
+### Compatibility and integrity decisions
+
+- Any manifest is current-run intent even when malformed or version-drifted. A missing manifest still routes current when `rubric.json`, the initialization marker, or v2 `input.json` is present. Legacy validation requires the affirmative legacy candidates/sourcing/evidence layout and no v2 marker.
+- `update_stage` requires a parsed object manifest with `version == 2`, then validates the stored assignment, fingerprints, active status, and referential links before obtaining or mutating a stage record.
+- Forward and backward links require absolute resolved target directories, locally valid target assignment fingerprints, matching target run IDs, and reciprocal path/identity/fingerprint fields.
+- Initialization writes an exact assignment-and-forward-link marker before assignment artifacts. A retry may rewrite only the same assignment under a matching marker, rejects unrelated content, and removes the marker after the manifest is durable. Supersession still changes only the old manifest linkage; old input, thesis, and rubric bytes remain unchanged.
+- Read-only validation of the affirmative legacy fixture remains supported. Candidate shape alone can no longer select legacy behavior.
+
+### Final self-review and concerns
+
+- Reviewed the complete lifecycle production diff from `5bb4a72`, not only this patch.
+- Tightened marker recovery to reject nonempty nested `sourcing` or `companies` directories and to clean up an exact marker if a retry observes an already-durable destination manifest.
+- Confirmed the required injected pre-manifest failure retries successfully and leaves all source-run assignment artifacts byte-identical.
+- Cross-directory bidirectional linkage cannot be one filesystem transaction; the explicit marker handles pre-manifest interruption, while the existing idempotent retry repairs interruption between the new forward manifest and old backward manifest.
+- The deliberately simple anchor-overlap heuristic remains unchanged and may conservatively reject theses whose only meaningful terms are short/common tokens.

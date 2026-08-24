@@ -371,6 +371,143 @@ class AssignmentV2LifecycleTests(unittest.TestCase):
 
         self.assertTrue(any("linkage" in error for error in result["errors"]))
 
+    def test_referential_links_reject_missing_tampered_and_nonreciprocal_targets(self):
+        mutations = ("missing", "wrong_run_id", "wrong_fingerprint", "nonreciprocal")
+        for mutation in mutations:
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                old_sources = self.write_sources(root / "old-sources")
+                old_run = root / "old-run"
+                self.run_module.initialize_run(old_run, *old_sources)
+                new_sources = self.write_sources(
+                    root / "new-sources",
+                    input_change=lambda value: value["seed"].update(
+                        {"value": "linked visual-memory topic"}
+                    ),
+                )
+                new_run = root / "new-run"
+                self.run_module.supersede_run(old_run, new_run, *new_sources)
+                old_manifest_path = old_run / "manifest.json"
+
+                if mutation == "missing":
+                    old_run.rename(root / "moved-old-run")
+                else:
+                    old_manifest = json.loads(
+                        old_manifest_path.read_text(encoding="utf-8")
+                    )
+                    if mutation == "wrong_run_id":
+                        old_manifest["run_id"] = "wrong-old-run"
+                    elif mutation == "wrong_fingerprint":
+                        old_manifest["assignment_fingerprint"] = "0" * 64
+                    else:
+                        old_manifest["superseded_by"] = None
+                    old_manifest_path.write_text(
+                        json.dumps(old_manifest), encoding="utf-8"
+                    )
+
+                result = self.run_module.validate_run(new_run)
+
+                self.assertFalse(result["valid"])
+                self.assertTrue(
+                    any(
+                        phrase in error.lower()
+                        for error in result["errors"]
+                        for phrase in (
+                            "linked target",
+                            "target run_id",
+                            "target assignment fingerprint",
+                            "reciprocal",
+                        )
+                    ),
+                    result["errors"],
+                )
+
+    def test_initialization_marker_recovers_pre_manifest_failure_and_rejects_mismatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            old_sources = self.write_sources(root / "old-sources")
+            old_run = root / "old-run"
+            self.run_module.initialize_run(old_run, *old_sources)
+            old_assignment = {
+                name: (old_run / name).read_bytes()
+                for name in ("input.json", "thesis.md", "rubric.json")
+            }
+            new_sources = self.write_sources(
+                root / "new-sources",
+                input_change=lambda value: value["seed"].update(
+                    {"value": "recoverable marker visual-memory topic"}
+                ),
+            )
+            new_run = root / "new-run"
+            original_write = self.run_module.atomic_write_json
+            failed = False
+
+            def fail_rubric_once(path, value):
+                nonlocal failed
+                if Path(path).resolve() == (new_run / "rubric.json").resolve() and not failed:
+                    failed = True
+                    raise self.run_module.ArtifactWriteError("rubric write interrupted")
+                return original_write(path, value)
+
+            with patch.object(
+                self.run_module, "atomic_write_json", side_effect=fail_rubric_once
+            ):
+                with self.assertRaisesRegex(
+                    self.run_module.ArtifactWriteError, "rubric write interrupted"
+                ):
+                    self.run_module.supersede_run(
+                        old_run, new_run, *new_sources
+                    )
+
+            marker_path = new_run / ".assignment-v2-init.json"
+            marker = json.loads(marker_path.read_text(encoding="utf-8"))
+            self.assertFalse((new_run / "manifest.json").exists())
+            self.assertEqual(marker["supersedes_run_id"], "old-run")
+            self.assertEqual(marker["supersedes_run_path"], str(old_run.resolve()))
+            self.assertEqual(
+                old_assignment,
+                {
+                    name: (old_run / name).read_bytes()
+                    for name in ("input.json", "thesis.md", "rubric.json")
+                },
+            )
+
+            self.run_module.supersede_run(old_run, new_run, *new_sources)
+
+            self.assertFalse(marker_path.exists())
+            self.assertTrue((new_run / "manifest.json").exists())
+            self.assertEqual(
+                old_assignment,
+                {
+                    name: (old_run / name).read_bytes()
+                    for name in ("input.json", "thesis.md", "rubric.json")
+                },
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            sources = self.write_sources(root / "sources")
+            run_dir = root / "run"
+            original_write = self.run_module.atomic_write_json
+
+            def always_fail_rubric(path, value):
+                if Path(path).resolve() == (run_dir / "rubric.json").resolve():
+                    raise self.run_module.ArtifactWriteError("rubric blocked")
+                return original_write(path, value)
+
+            with patch.object(
+                self.run_module, "atomic_write_json", side_effect=always_fail_rubric
+            ):
+                with self.assertRaises(self.run_module.ArtifactWriteError):
+                    self.run_module.initialize_run(run_dir, *sources)
+            marker_path = run_dir / ".assignment-v2-init.json"
+            marker = json.loads(marker_path.read_text(encoding="utf-8"))
+            marker["assignment_fingerprint"] = "0" * 64
+            marker_path.write_text(json.dumps(marker), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "initialization marker"):
+                self.run_module.initialize_run(run_dir, *sources)
+
     def test_supersede_refuses_to_reuse_an_existing_destination_run(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
